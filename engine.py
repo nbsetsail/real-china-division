@@ -13,6 +13,7 @@
   python pipeline_skeleton.py --test golden_test_set_v0.json   # 黄金测试集回归
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -260,9 +261,8 @@ def _apply_alias(text: str) -> str:
     return text
 
 
-def _match(text: str, name: str, boundary2: bool = False):
-    # 去后缀形式必须 >=2 字：单字子串匹配会严重误伤（"新县"->"新"命中"浦东新区"——v1 回归教训）。
-    # boundary2：两字形式命中位置的前一字符须是建制边界/非汉字（"胶南县"不得命中"南县"——v0.2 回归教训）
+def _match_at(text: str, name: str, boundary2: bool = False):
+    """同 _match，但返回 (命中形, 位置) 供位置优先消歧。"""
     for form in (name, name.rstrip("省市县区盟旗")):
         if form and len(form) >= 2:
             start = 0
@@ -273,8 +273,15 @@ def _match(text: str, name: str, boundary2: bool = False):
                 if boundary2 and len(form) == 2 and not _at_boundary(text, i):
                     start = i + 1
                     continue
-                return form
+                return form, i
     return None
+
+
+def _match(text: str, name: str, boundary2: bool = False):
+    # 去后缀形式必须 >=2 字：单字子串匹配会严重误伤（"新县"->"新"命中"浦东新区"——v1 回归教训）。
+    # boundary2：两字形式命中位置须处于建制边界（"胶南县"不得命中"南县"——v0.2 回归教训）
+    r = _match_at(text, name, boundary2)
+    return r[0] if r else None
 
 
 def _fuzzy_in(text: str, name: str):
@@ -332,12 +339,18 @@ def _resolve_core(raw: str) -> dict:
     if not prov_found:
         hits = _global_county_match(text)
         if hits is None:
-            # 乡镇/街道名直配（仅收录 >=3 字且带后缀的名字，防误伤）；无前缀命中时做尾部扫描（"杭州市下沙街道"类）
+            # 乡镇/街道名直配（仅收录 >=3 字且带后缀的名字，防误伤）；按后缀位置回溯截取候选，
+            # 覆盖镇名嵌中间（"下沙街道6号大街452号"）与带市级前缀（"杭州市下沙街道"）两类
             t_name, t_codes = text, TOWNSHIP_GLOBAL.get(text, [])
             if not t_codes:
-                for _l in (5, 4, 3):
-                    if text[-_l:] in TOWNSHIP_GLOBAL:
-                        t_name, t_codes = text[-_l:], TOWNSHIP_GLOBAL[text[-_l:]]
+                cands = set()
+                for m in re.finditer(r"街道|镇|乡", text):
+                    end = m.end()
+                    for k in range(max(0, end - 8), end - 1):
+                        cands.add(text[k:end])
+                for cand in sorted(cands, key=len, reverse=True):
+                    if cand in TOWNSHIP_GLOBAL:
+                        t_name, t_codes = cand, TOWNSHIP_GLOBAL[cand]
                         break
             if len(t_codes) == 1:
                 ccode = t_codes[0]
@@ -357,6 +370,14 @@ def _resolve_core(raw: str) -> dict:
                          if c and _match(text, c, boundary2=True)]
             if len(city_hits) == 1:
                 p, c = city_hits[0]
+                m = _match(text, c, boundary2=True)
+                rest_after = text.replace(m, "", 1) if m else text
+                if any(mk in rest_after for mk in ("开发区", "园区", "高新区", "新区")):
+                    return {"status": "special", "result": _fmt(p, c, None),
+                            "codes": {"province": DIV[p]["code"],
+                                      "city": DIV[p]["cities"][c].get("code"), "county": None},
+                            "confidence": 0.8,
+                            "note": "含开发区/园区/新区表述，非正式区划，落到上级市并标注口径"}
                 return {"status": "resolve", "result": _fmt(p, c, None),
                         "codes": {"province": DIV[p]["code"],
                                   "city": DIV[p]["cities"][c].get("code"), "county": None},
@@ -368,6 +389,9 @@ def _resolve_core(raw: str) -> dict:
                     "note": "未能识别任何区划实体"}
         refined = [h for h in hits if any(seg.rstrip("市") in text for seg in h["path"][:-1])]
         hits = refined or hits
+        if len(hits) > 1 and len({h["pos"] for h in hits}) > 1:
+            # 多县命中但位置不同：地址语序靠前者胜出（"昆山开发区前进东路"——昆山在句首，前进区在佳木斯）
+            hits = [min(hits, key=lambda h: h["pos"])]
         if len(hits) == 1:
             h = hits[0]
             result_str, hcodes = "-".join(h["path"]), dict(h["codes"])
@@ -454,16 +478,17 @@ def _resolve_core(raw: str) -> dict:
 
 
 def _global_county_match(text: str):
-    """省未命中时，全库直配区县；返回 [{"path": [...], "codes": {...}}] 或 None。
+    """省未命中时，全库直配区县；返回 [{"path": [...], "codes": {...}, "pos": 命中位置}] 或 None。
     两字名启用边界校验（boundary2），防「胶南县」误命中「南县」。"""
     hits = []
     for p, pv in DIV.items():
         for c, cv in pv["cities"].items():
             for cn in cv["counties"]:
-                if _match(text, cn, boundary2=True):
+                r = _match_at(text, cn, boundary2=True)
+                if r:
                     hits.append({"path": [p] + ([c] if c else []) + [cn],
                                  "codes": {"province": pv["code"], "city": cv.get("code") if c else None,
-                                           "county": cv["counties"][cn]}})
+                                           "county": cv["counties"][cn]}, "pos": r[1]})
     return hits or None
 
 
