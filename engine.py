@@ -238,8 +238,9 @@ def _at_boundary(text: str, i: int) -> bool:
 
 
 def _apply_alias(text: str) -> str:
-    # 防误伤两条：①别名后紧跟建制后缀且拼成已知区划名（如「沙县」+「区」->「沙县区」）时不替换；
-    # ②两字别名必须位于建制边界（「铜陵县」词中的「陵县」不替换）
+    # 防误伤三条：①别名后紧跟建制后缀且拼成已知区划名（如「沙县」+「区」->「沙县区」）时不替换；
+    # ②别名必须位于建制边界——单字别名「京」不得命中「南京」词中（v0.3 回归教训）；
+    # ③前邻是已知区划名结尾时视为边界（「宁波鄞州」的鄞州）
     for k in sorted(ALIAS_ALL, key=len, reverse=True):
         start = 0
         while True:
@@ -247,10 +248,11 @@ def _apply_alias(text: str) -> str:
             if i < 0:
                 break
             j = i + len(k)
-            if text[j:j + 1] and (k + text[j]) in KNOWN_NAMES:
+            # 别名+下一字符拼成已知区划名（全名或去后缀短形式，"京山"->京山市）时不替换
+            if text[j:j + 1] and (k + text[j]) in KNOWN_NAMES | KNOWN_SHORT:
                 start = j
                 continue
-            if len(k) == 2 and not _at_boundary(text, i):
+            if not _at_boundary(text, i):
                 start = j
                 continue
             text = text[:i] + ALIAS_ALL[k] + text[j:]

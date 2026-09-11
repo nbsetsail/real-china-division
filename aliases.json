@@ -30,6 +30,12 @@
     {"alias": "汴梁", "canonical": "河南省开封市", "kind": "古称"},
     {"alias": "汴京", "canonical": "河南省开封市", "kind": "古称"},
     {"alias": "燕京", "canonical": "北京市", "kind": "历史都城古称"},
+    {"alias": "金陵", "canonical": "江苏省南京市", "kind": "城市别称", "source": "历史古称（南京地名志）；现行另有乡镇级'金陵'由引擎后缀守卫防误伤"},
+    {"alias": "羊城", "canonical": "广东省广州市", "kind": "城市别称", "source": "城市标准别称（市政府门户/地名志）"},
+    {"alias": "泉城", "canonical": "山东省济南市", "kind": "城市别称", "source": "城市标准别称"},
+    {"alias": "鹭岛", "canonical": "福建省厦门市", "kind": "城市别称", "source": "城市标准别称"},
+    {"alias": "春城", "canonical": "云南省昆明市", "kind": "城市别称", "source": "城市标准别称"},
+    {"alias": "榕城", "canonical": "福建省福州市", "kind": "城市别称", "source": "城市标准别称"},
     {"alias": "阿拉善盟", "canonical": "内蒙古自治区阿拉善盟", "kind": "建制全名"},
     {"alias": "延边朝鲜族自治州", "canonical": "吉林省延边朝鲜族自治州", "kind": "建制全名"}
   ],
