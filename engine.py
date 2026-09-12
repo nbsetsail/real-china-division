@@ -393,6 +393,9 @@ def _resolve_core(raw: str) -> dict:
                     "note": "未能识别任何区划实体"}
         refined = [h for h in hits if any(seg.rstrip("市") in text for seg in h["path"][:-1])]
         hits = refined or hits
+        fulls = [h for h in hits if h.get("full")]
+        if len(hits) > 1 and fulls and len(fulls) < len(hits):
+            hits = fulls  # 全名命中优先于短形式（鄂托克前旗 vs 鄂托克旗——v0.6 回归教训）
         if len(hits) > 1 and len({h["pos"] for h in hits}) > 1:
             # 多县命中但位置不同：地址语序靠前者胜出（"昆山开发区前进东路"——昆山在句首，前进区在佳木斯）
             hits = [min(hits, key=lambda h: h["pos"])]
@@ -427,6 +430,10 @@ def _resolve_core(raw: str) -> dict:
         county_pool = [cn for _, _, counties in entries for cn in counties]
 
     county_hits = [cn for cn in county_pool if _match(rest, cn)]
+    if len(county_hits) > 1:
+        fulls = [cn for cn in county_hits if _match_at(rest, cn)[0] == cn]
+        if fulls and len(fulls) < len(county_hits):
+            county_hits = fulls  # 全名命中优先（鄂托克前旗 vs 鄂托克旗——v0.6 回归教训）
     codes = {"province": entry["code"], "city": city_code, "county": None}
 
     if len(county_hits) == 1:
@@ -513,7 +520,8 @@ def _global_county_match(text: str):
                 if r:
                     hits.append({"path": [p] + ([c] if c else []) + [cn],
                                  "codes": {"province": pv["code"], "city": cv.get("code") if c else None,
-                                           "county": cv["counties"][cn]}, "pos": r[1]})
+                                           "county": cv["counties"][cn]}, "pos": r[1],
+                                 "full": r[0] == cn})
     return hits or None
 
 
@@ -557,11 +565,18 @@ def _pinyin_retry(text: str):
 
 
 def resolve_any(text: str) -> dict:
-    """统一入口：非数字字符仅为空白/连字符时走编码直查，否则走地址解析。
-    （"上海市 200000"含汉字仍是地址；"510124"/"110000000000"是编码）API 服务端用。"""
+    """统一入口：纯数字串走编码直查；文中含 6 位地址码时优先做编码解读
+    （「510124是哪里」→历史码归属）；否则走地址解析。API 服务端用。"""
     t = text.strip()
     if t and not (set(t) - set("0123456789 -")):
         return resolve_by_code(t)
+    import re as _re
+    m = _re.search(r"\d{6}", t)
+    if m and _re.sub(r"\d", "", t):
+        out = resolve_by_code(m.group(0))
+        if out["status"] != "unresolvable":
+            out["note"] = "识别到地址码「" + m.group(0) + "」；" + str(out.get("note") or "")
+            return out
     return resolve(t)
 
 
