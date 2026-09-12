@@ -132,7 +132,7 @@ for _p, _pv in DIV.items():
 #         新码必须是现行库中的码（映射必须落在现行区划上）
 # ---------------------------------------------------------------------------
 EVENTS_FILE = Path(__file__).parent / "data" / "historical_changes_v1.json"
-HIST_ALIAS, OLD_CODE_MAP, EVENTS_META = {}, {}, None
+HIST_ALIAS, OLD_CODE_MAP, EVENTS_META, EVENTS = {}, {}, None, []
 CODE_PATH = {}
 for _p, _pv in DIV.items():
     CODE_PATH[_pv["code"]] = ([_p], {"province": _pv["code"]})
@@ -154,6 +154,7 @@ if EVENTS_FILE.exists():
     try:
         _edict = json.loads(EVENTS_FILE.read_text(encoding="utf-8"))
         EVENTS_META = _edict["meta"]
+        EVENTS = _edict["events"]
         for _e in _edict["events"]:
             _on, _oc = _e["old"]["name"], _e["old"]["code"]
             _nn, _nc = _e["new"]["name"], _e["new"]["code"]
@@ -566,6 +567,67 @@ def resolve_by_code(code: str) -> dict:
                     "note": f"历史码映射：{first['year']} 年{first['type']}，映射链 {len(hops)} 跳"}
     return {"status": "unresolvable", "result": None, "codes": None, "confidence": 0.0,
             "note": "未能识别的区划码（现行与历史库均无）"}
+
+
+def query_events(year=None, q=None, code=None, limit=50):
+    """变更事件库查询（L1 版本查询端点核心）：按年份/关键词/区划码过滤，纯函数。
+    code 支持 6/12 位（旧码新码均可，自动补零）；q 对事件全文字段做子串匹配。"""
+    year = int(year) if year else None
+    c = None
+    if code:
+        d = "".join(ch for ch in str(code) if ch.isdigit())
+        c = d + "000000" if len(d) == 6 else d
+        if len(c) != 12:
+            c = None
+    blobs = getattr(query_events, "_blobs", None)
+    if blobs is None:
+        blobs = query_events._blobs = [json.dumps(e, ensure_ascii=False) for e in EVENTS]
+    out = []
+    for e, blob in zip(EVENTS, blobs):
+        if year and e["year"] != year:
+            continue
+        if c and e["old"]["code"] != c and e["new"]["code"] != c:
+            continue
+        if q and q not in blob:
+            continue
+        out.append({"year": e["year"], "type": e["type"], "level": e["level"],
+                    "old": {"name": e["old"]["name"], "code": e["old"]["code"]},
+                    "new": {"name": e["new"]["name"], "code": e["new"]["code"]},
+                    "old_path": e.get("old_path"), "new_path": e.get("new_path"),
+                    "doc_no": e.get("doc_no"), "source_url": e.get("source_url")})
+    out.sort(key=lambda x: -x["year"])
+    return {"total": len(out), "returned": min(len(out), limit), "events": out[:limit],
+            "filter": {"year": year, "q": q, "code": c},
+            "note": "变更事件库 1980-2026（官方代码簿差分+策展）；doc_no 增量回填中"}
+
+
+def dual_code(query: str) -> dict:
+    """双码对照（L1 端点核心）：民政口径现行码 × 统计口径的对照与差异点诚实披露。"""
+    t = (query or "").strip()
+    if not t:
+        return {"status": "unresolvable", "note": "参数不能为空"}
+    if set(t) - set("0123456789 -"):
+        base = resolve(t)
+    else:
+        base = resolve_by_code(t)
+    if base["status"] == "unresolvable":
+        return {"status": "unresolvable", "query": t, "note": base["note"]}
+    codes = dict(base.get("codes") or {})
+    mca = {"口径": "民政部·国家地名信息库（年度版 2025-12-31 + 年内日更新）"}
+    for k in ("province", "city", "county", "township"):
+        if codes.get(k):
+            mca[k] = codes[k]
+    nbs = {
+        "省市县乡四级": "统计用区划代码与民政 12 位码同源 GB/T 2260，四级一致（同源性抽查核验持续中）",
+        "村级": "统计村级 12 位码与城乡分类代码自 2024-10 起无现行公开渠道（2023 版为最后一期）；"
+               "本库村级实体以民政地名口径 20 位码提供，不做伪造映射",
+        "开发区专项段": "统计口径存在开发区专项代码段，民政口径无此建制——引擎按特殊口径标注",
+    }
+    out = {"status": base["status"], "result": base.get("result"),
+           "mca": mca, "nbs": nbs, "note": base.get("note")}
+    if base["status"] == "historical":
+        out["historical"] = {"old_code": codes.get("old_code"), "current_code": codes.get("current_code")}
+    return out
 
 
 def run_golden(path: str):

@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from engine import resolve, resolve_by_code  # noqa: E402
+from engine import resolve, resolve_by_code, dual_code, query_events  # noqa: E402
 
 
 def test_resolve_basic():
@@ -54,3 +54,19 @@ def test_historical_code():
 
 def test_bad_code():
     assert resolve_by_code("999999")["status"] == "unresolvable"
+
+
+def test_events_query():
+    r = query_events(q="郫县")
+    assert r["total"] >= 1 and any(e["year"] == 2016 for e in r["events"])
+
+
+def test_events_by_code():
+    r = query_events(code="510124")
+    assert r["total"] >= 1
+
+
+def test_dual_code():
+    d = dual_code("郫都区")
+    assert d["status"] == "resolve" and d["mca"].get("county") == "510117000000"
+    assert "村级" in d["nbs"]
