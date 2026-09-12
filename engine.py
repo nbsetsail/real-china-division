@@ -656,12 +656,129 @@ def dual_code(query: str) -> dict:
     return out
 
 
+# ---------------------------------------------------------------------------
+# 时间机器（终极形态核心）：resolve_at(raw, year) —— 任意年份的区划状态回放
+# 数据：GB/T 2260 官方口径逐年快照（1980-2020，@cndiv/source-history 固化）
+# ---------------------------------------------------------------------------
+GB_CSV = Path(__file__).parent / "sources" / "gb2260" / "package" / "data" / "divisions.csv"
+_GB_YEARS = None   # {year: {code: (name, parent, level)}}
+
+
+def _gb_load():
+    global _GB_YEARS
+    if _GB_YEARS is None:
+        import csv
+        from collections import defaultdict
+        cache = defaultdict(dict)
+        with open(GB_CSV, encoding="utf-8") as f:
+            for r in csv.DictReader(f):
+                y = int(r["year"])
+                cache[y][r["code"]] = (r["name"], r["parent_code"], int(r["level"]))
+        # 2021 为部分变更快照（21 行），不作为可回放年份
+        _GB_YEARS = {y: d for y, d in cache.items() if len(d) > 1000}
+    return _GB_YEARS
+
+
+def _gb_path(rows, code):
+    parts, c = [], code
+    for _ in range(4):
+        if c not in rows:
+            break
+        name, parent, lvl = rows[c]
+        parts.append(name)
+        c = parent
+        if lvl == 1:
+            break
+    return list(reversed(parts))
+
+
+def resolve_at(raw: str, year) -> dict:
+    """时间机器：给定名称/地址与年份，回放该年的区划状态。纯函数。
+    返回 {status, result, codes:{code, province, city}, now:{...}|None, note}。
+    当年无此建制时诚实拒绝，并附现行对照（now）——时间机器的"错位提示"。"""
+    try:
+        y = int(year)
+    except (TypeError, ValueError):
+        return {"status": "unresolvable", "result": None, "codes": None, "now": None,
+                "note": "year 须为整数年份"}
+    gb = _gb_load()
+    if y not in gb:
+        return {"status": "unresolvable", "result": None, "codes": None, "now": None,
+                "note": f"可回放年份范围 {min(gb)}-{max(gb)}（GB/T 2260 快照覆盖期）"}
+    rows = gb[y]
+    text = _strip_noise(raw or "")
+    if not text:
+        return {"status": "unresolvable", "result": None, "codes": None, "now": None,
+                "note": "输入为空"}
+    # 当年名称索引（省/市/县），带边界规则防词中误伤
+    hits = []
+    for code, (name, parent, lvl) in rows.items():
+        if lvl not in (1, 2, 3):
+            continue
+        r = _match_at(text, name, boundary2=True)
+        if r:
+            hits.append({"code": code, "name": name, "lvl": lvl, "pos": r[1]})
+    now = None
+    if not hits:
+        cur = _resolve_core(text)
+        if cur["status"] in ("resolve", "special"):
+            now = {"result": cur["result"], "codes": cur.get("codes")}
+            return {"status": "unresolvable", "result": None, "codes": None, "now": now,
+                    "note": f"{y} 年快照中无此建制（当年不存在或已撤销）；现行为「{cur['result']}」"}
+        return {"status": "unresolvable", "result": None, "codes": None, "now": None,
+                "note": f"{y} 年快照中未识别该区划"}
+    # 同名多码 -> 歧义；用上级名在文本中出现与否精化
+    by_name = {}
+    for h in hits:
+        by_name.setdefault(h["name"], []).append(h)
+    cands = []
+    for name, hs in by_name.items():
+        refined = [h for h in hs if any(rows[p][0].rstrip("市") in text
+                                        for p in [h["code"]] if False) or True]
+        # 精化：上级路径任意一段出现在文本中
+        refined = []
+        for h in hs:
+            path = _gb_path(rows, h["code"])
+            if any(seg.rstrip("市") in text for seg in path[:-1]) or len(hs) == 1:
+                refined.append(h)
+        cands.extend(refined or hs)
+    # 位置优先；同位并列时高建制级别优先（"海南省"应胜过乌海市海南区——v0.5 回归教训）
+    cands.sort(key=lambda h: (h["pos"], h["lvl"]))
+    top_name = cands[0]["name"]
+    finals = [h for h in cands if h["name"] == top_name]
+    if len(finals) > 1 and len({(h["pos"], -h["lvl"]) for h in finals}) > 1:
+        finals = [min(finals, key=lambda h: (h["pos"], h["lvl"]))]
+    if len(finals) > 1:
+        return {"status": "ambiguous",
+                "result": ["-".join(_gb_path(rows, h["code"])) for h in finals],
+                "codes": None, "now": None, "note": f"{y} 年同名区划多处存在，输出候选集"}
+    h = finals[0]
+    path = _gb_path(rows, h["code"])
+    codes = {"code": h["code"], "province": path[0]}
+    if len(path) > 1:
+        codes["city"] = path[1] if rows[h["code"]][2] >= 2 and h["code"][:2] + "0000" != h["code"] else None
+    # 现行对照：若该码已不存在，查事件链
+    cur_code = h["code"]
+    hops = 0
+    while cur_code in OLD_CODE_MAP and hops < 6:
+        cur_code = OLD_CODE_MAP[cur_code]["code"]
+        hops += 1
+    if cur_code in CODE_PATH and cur_code != h["code"]:
+        now = {"result": "-".join(CODE_PATH[cur_code][0]), "code": cur_code}
+    elif h["code"] in CODE_PATH:
+        now = {"result": "-".join(CODE_PATH[h["code"]][0]), "code": h["code"]}
+    lvl_note = {1: "省级", 2: "地级", 3: "县级"}.get(rows[h["code"]][2], "")
+    return {"status": "resolve", "result": "-".join(path), "codes": codes, "now": now,
+            "confidence": 1.0, "note": f"{y} 年{lvl_note}回放（GB/T 2260 快照）"}
+
+
 def run_golden(path: str):
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
     cases, by_type, passed = data["cases"], {}, 0
     for case in cases:
-        exp, out = case["expect"], (resolve_by_code(case["code"]) if case.get("code") else resolve(case["raw"]))
+        exp, out = case["expect"], (resolve_by_code(case["code"]) if case.get("code") else
+                                     resolve_at(case["raw"], case["year"]) if case.get("year") else resolve(case["raw"]))
         ok = _judge(exp, out)
         passed += ok
         by_type.setdefault(case["type"], [0, 0])
@@ -693,6 +810,14 @@ def _judge(exp, out) -> bool:
         return out["status"] == "multi"
     if mode == "unresolvable":
         return out["status"] == "unresolvable"
+    if mode == "at":
+        if out["status"] != exp.get("status"):
+            return False
+        contains = exp.get("contains") or []
+        if not all(c in str(out["result"] or "") for c in contains):
+            return False
+        nc = exp.get("now_contains")
+        return (nc in str((out.get("now") or {}).get("result") or "")) if nc else True
     if mode == "code":
         if out["status"] != exp.get("status"):
             return False

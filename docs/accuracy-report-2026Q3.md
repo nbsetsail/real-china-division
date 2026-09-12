@@ -1,12 +1,13 @@
 # 引擎准确率报告（2026Q3）
 
-> 生成于 2026-09-13。基准：自建黄金测试集 v1（97 例难例），黄金全集随 L3 审计交付提供，
+> 生成于 2026-09-13。基准：自建黄金测试集 v1（104 例难例），黄金全集随 L3 审计交付提供，
 > 本报告公开分类别通过率与全量文件哈希——持有同套文件者可独立复现（Don't trust, verify）。
 
-**总通过率：97/97（100.0%）**
+**总通过率：98/104（94.2%）**
 
 | 类别 | 通过 | 占比 |
 |---|---|---|
+| 时间机器 | 1/7 | 14% |
 | 同名歧义 | 8/8 | 100% |
 | 历史变更 | 8/8 | 100% |
 | 开发区与正式区划 | 8/8 | 100% |
@@ -33,12 +34,12 @@
 
 | 文件 | sha256[:16] |
 |---|---|
-| `golden_test_set_v1.json` | `64814c74663d481d` |
+| `golden_test_set_v1.json` | `d8deea872b12e906` |
 | `data/divisions_v1.json` | `f7d943ecf8188cc5` |
 | `data/townships_v1.json` | `f88ffd30b5d824b4` |
 | `data/historical_changes_v1.json` | `ddf84f30e27bfe89` |
 | `aliases.json` | `4ba5551cf39d98f7` |
-| `pipeline_skeleton.py` | `0cb5fda76e382564` |
+| `pipeline_skeleton.py` | `f8127a1bdbcaeff4` |
 | `data/villages_v1.json` | `853cd85c30ab18eb` |
 
 ## 已知边界（诚实披露）
