@@ -287,6 +287,7 @@ def _match(text: str, name: str, boundary2: bool = False):
 
 def _fuzzy_in(text: str, name: str):
     """编辑距离 1 的错字命中（仅对 >=3 字词启用，防两字名误伤——v0 回归教训）。
+    命中窗口须处于建制边界（"中山西路"里的"山西路"不得命中山西省——v0.4 回归教训）。
     返回 (命中的标准形, 命中窗口)，供拼音验证消歧（"山冬省"：山东/山西字符距离同为1，拼音分胜负）。"""
     for form in (name, name.rstrip("省市县区盟旗")):
         n = len(form)
@@ -295,6 +296,8 @@ def _fuzzy_in(text: str, name: str):
         for i in range(len(text) - n + 1):
             win = text[i:i + n]
             if sum(a != b for a, b in zip(win, form)) == 1:
+                if not _at_boundary(text, i):
+                    continue
                 return form, win
     return None
 
@@ -327,7 +330,7 @@ def _resolve_core(raw: str) -> dict:
 
     prov_found = []
     for p in DIV:
-        m = _match(text, p)
+        m = _match(text, p, boundary2=True)  # 短形式须边界：防"中山西路"命中"山西"（v0.4 回归教训）
         if m:
             prov_found.append((p, 1.0 if m == p else 0.9, m))
         else:
@@ -415,7 +418,7 @@ def _resolve_core(raw: str) -> dict:
     hit_city, city_code, county_pool = None, None, []
     for c, ccode, counties in entries:
         if c:
-            m = _match(rest, c)
+            m = _match(rest, c, boundary2=True)
             if m:
                 hit_city, city_code, county_pool = c, ccode, counties
                 rest = rest.replace(m, "", 1)
@@ -474,6 +477,27 @@ def _resolve_core(raw: str) -> dict:
     if hit_city:
         return {"status": "resolve", "result": _fmt(best_p, hit_city, None), "codes": codes,
                 "confidence": 0.9, "note": "解析到地级市"}
+    if conf < 0.8:
+        # 未过拼音验证的模糊省匹配不单独作数，退回全库区县直配取证（"南京市鼓楼区"不得判成北京市——v0.4 回归教训）
+        hits2 = _global_county_match(text)
+        if hits2:
+            refined2 = [h for h in hits2 if any(seg.rstrip("市") in text for seg in h["path"][:-1])]
+            hits2 = refined2 or hits2
+            if len(hits2) > 1 and len({h["pos"] for h in hits2}) > 1:
+                hits2 = [min(hits2, key=lambda h: h["pos"])]
+            if len(hits2) == 1:
+                h = hits2[0]
+                result_str, hcodes = "-".join(h["path"]), dict(h["codes"])
+                ccode = hcodes.get("county")
+                for tn in COUNTY_TOWNSHIPS.get(ccode or "", {}):
+                    if _match(text, tn):
+                        result_str += "-" + tn
+                        hcodes["township"] = COUNTY_TOWNSHIPS[ccode][tn]
+                        break
+                return {"status": "resolve", "result": result_str, "codes": hcodes,
+                        "confidence": 0.8, "note": "模糊省匹配被县级证据修正"}
+            return {"status": "ambiguous", "result": ["-".join(h["path"]) for h in hits2],
+                    "codes": None, "confidence": 0.8, "note": "模糊省匹配且多县证据，输出候选集"}
     return {"status": "resolve", "result": _fmt(best_p, None, None), "codes": codes,
             "confidence": conf, "note": "解析到省级"}
 
