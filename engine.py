@@ -593,10 +593,12 @@ def resolve_by_code(code: str) -> dict:
             "note": "未能识别的区划码（现行与历史库均无）"}
 
 
-def query_events(year=None, q=None, code=None, limit=50):
-    """变更事件库查询（L1 版本查询端点核心）：按年份/关键词/区划码过滤，纯函数。
+def query_events(year=None, q=None, code=None, limit=50, year_start=None, year_end=None):
+    """变更事件库查询（L1 版本查询端点核心）：按年份/年份区间/关键词/区划码过滤，纯函数。
     code 支持 6/12 位（旧码新码均可，自动补零）；q 对事件全文字段做子串匹配。"""
     year = int(year) if year else None
+    year_start = int(year_start) if year_start else None
+    year_end = int(year_end) if year_end else None
     c = None
     if code:
         d = "".join(ch for ch in str(code) if ch.isdigit())
@@ -610,6 +612,10 @@ def query_events(year=None, q=None, code=None, limit=50):
     for e, blob in zip(EVENTS, blobs):
         if year and e["year"] != year:
             continue
+        if year_start and e["year"] < year_start:
+            continue
+        if year_end and e["year"] > year_end:
+            continue
         if c and e["old"]["code"] != c and e["new"]["code"] != c:
             continue
         if q and q not in blob:
@@ -621,7 +627,7 @@ def query_events(year=None, q=None, code=None, limit=50):
                     "doc_no": e.get("doc_no"), "source_url": e.get("source_url")})
     out.sort(key=lambda x: -x["year"])
     return {"total": len(out), "returned": min(len(out), limit), "events": out[:limit],
-            "filter": {"year": year, "q": q, "code": c},
+            "filter": {"year": year, "year_start": year_start, "year_end": year_end, "q": q, "code": c},
             "note": "变更事件库 1980-2026（官方代码簿差分+策展）；doc_no 增量回填中"}
 
 
