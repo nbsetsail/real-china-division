@@ -2,8 +2,8 @@
 __pycache__/
 *.pyc
 .pytest_cache/
-# 原始大体积数据只留本地做增量更新底座，不入库（46MB 级）；对外分发走 release/ 里的压缩 gz。
+# 原始大体积村级数据只留本地作增量更新底座，不入库（46MB 级）；
+# 对外分发走 GitHub Release 的按版本打包 tar.gz（由 build_l0_release.py 生成到仓库外 dist/，维护者手动上传）。
 # 小体积引擎数据（divisions/townships/change_events/historical_changes 等 <3MB）随仓库走。
 data/villages.csv
-# release/ 常驻最新一版附件（两个 gz + 清单/校验和，共约 12MB），随数据更新重建并入库；
-# 历史版本归档在 GitHub Release（按 tag 区分，由维护者手动上传）。
+# 仓库内不保留 release/ 冗余目录：村级全量（52MB/46MB）不进 git，分发统一走 GitHub Release。

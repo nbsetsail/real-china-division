@@ -21,14 +21,14 @@
 
 ### 发布流程
 
-- **原始数据与分发数据分层**：原始大体积数据（`data/villages.csv`，46MB 级，已加入 .gitignore）只留本地作增量更新底座，不入库；git 跟踪的 `release/` 存放**本地压缩后的最新 gz**，随仓库分发——克隆即得最新村级数据，无需先去 Release 页
-- **历史版本归档在 GitHub Release**（按 tag 区分，维护者手动上传对应版本附件）
-- Release 附件定为 4 件：`villages_v1.json.gz` / `villages.csv.gz` / **`DATA_MANIFEST.json`**（版本号自动取自 CHANGELOG、行数、SHA256）/ **`SHA256SUMS.txt`**（标准校验和，独立复现用）
-- 不附带任何无压缩大文件（54MB JSON / 46MB CSV 均不入库；gunzip 即得）
-- **版本号约定**：数据修订 `0.2.1` 式三位递增；小变动可在末尾追加构建号（如 `0.2.1.23153`）——CHANGELOG 写该号码，`DATA_MANIFEST.json` 与 git tag 自动跟随
-- 注：0.2.0 tag 历史中仍含 54MB JSON 与 46MB CSV 副本；彻底清除需改写历史 + force push，如仓库已有人克隆不建议
+- **数据源与分发分层**：`data/`（仓库外本地）为最新原始数据底座（46MB 级，不入库，作增量更新用）；仓库内 `l0_repo/data/` 仅随版本提交小体积引擎数据（divisions/townships/change_events 等 <3MB 的 JSON+CSV）。
+- **仓库内不保留 `release/` 冗余目录**：村级全量（52MB JSON / 46MB CSV）过大不进 git；分发统一走 **GitHub Release**——`build_l0_release.py` 把现行村级数据打包成版本化 tar.gz 到仓库外的 `dist/`（`real-china-division-data-<版本>.tar.gz`，含 villages_v1.json.gz / villages.csv.gz + DATA_MANIFEST.json / SHA256SUMS.txt），由维护者手动上传到对应 git tag 的 Release。
+- **历史版本归档在 GitHub Release**（按 tag 区分，每个 tag 一个 tar.gz 附件）。
+- **版本号约定**：数据修订 `0.2.1` 式三位递增；小变动可在末尾追加构建号（如 `0.2.1.23153`）——CHANGELOG 写该号码，tar.gz 文件名与 git tag 自动跟随。
+- 不附带任何无压缩大文件（gunzip 即得）；`Don't trust, verify`：下载后校验 SHA256SUMS.txt。
+- 注：0.2.0 历史中的大体积副本已通过 git-filter-repo 改写历史清除（force push 完成于 2026-09-14），当前仓库已无 >5MB 残留 blob，克隆即清爽。
 
-> 发布提醒：本条目需打 git tag `0.2.1` 并将对应 4 件附件上传至 GitHub Release（tag `0.2.1`）才真正对外归档。
+> 发布提醒：本条目数据对应 git tag `0.2.1`；将 `dist/real-china-division-data-0.2.1.tar.gz` 上传至 GitHub Release（tag `0.2.1`）即完成对外归档。
 
 ## [0.2.0] - 2026-09-12
 

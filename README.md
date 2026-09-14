@@ -48,7 +48,7 @@ resolve_by_code("510124")     # 历史码回溯 → 四川省-成都市-郫都�
 | `data/divisions_v1.json` | 33 省 / 341 地级 / 2847 县级 | 民政口径，官方 12 位码，年度版 2025-12-31 |
 | `data/townships_v1.json` | 2,827 县级 / 38,749 乡镇街道 | 含区县归属 |
 | `data/historical_changes_v1.json` | **5,274 条变更事件（1980-2026）** | 同名改码 2221 / 更名 887 / 新设 727 / 撤销 612 / 撤县设市 396 / 撤县设区 153 / 撤地设市 122 / 撤市设区 71 / 区划调整 57 / 划转 16 / 驻地迁移 9 / 撤区设区 2 / 撤旗设区 1；1980-2020 由 GB/T 2260 官方口径逐年快照差分，2021+ 增量由民政部区划地名网《县级以上行政区划变更情况》年度官方页（1999-2026，逐条带省级政府公告出处）+ 人工依据批复公告整理。**183 条已回填可核验官方出处（source_official + source_url）**；文号 doc_no 仅 123 条，归 L3 按需补录 |
-| `data/*.csv` | 同上平行格式 | 通用消费（divisions / townships / change_events）；村级 `villages.csv`（46MB）不入库，由维护者本地保留作增量更新底座——取最新版请用 `release/villages.csv.gz` 或 `release/villages_v1.json.gz` |
+| `data/*.csv` | 同上平行格式 | 通用消费（divisions / townships / change_events）；村级 `villages.csv`（46MB）不入库，由维护者本地保留作增量更新底座——取最新版请到 GitHub Release 下载按版本打包的 `real-china-division-data-<版本>.tar.gz`（含 `villages_v1.json.gz` / `villages.csv.gz` + 校验清单） |
 | `aliases.json` | 人工整理别名词典 | 历史名 / 古称 / 地标 / 简称 / 歧义 / 特殊口径，每条带来源 |
 
 ### 数据字典（核心字段）
@@ -83,7 +83,7 @@ resolve_by_code("510124")     # 历史码回溯 → 四川省-成都市-郫都�
 
 ## 六、Roadmap
 
-- [x] 村级全量（行政村/社区，民政地名口径）：**2,840 县 / 604,626 条**（行政村 484,499 + 社区 120,127），20 位地名标准码——发布于 Release 附件（`villages_v1.json.gz` / `villages.csv.gz`，各约 6MB，附 `DATA_MANIFEST.json` 与 `SHA256SUMS.txt` 供独立校验）。未覆盖 7 个特殊县域：金门、三沙市西沙区/南沙区、西藏岗巴/噶尔、云南大姚、新疆和安（新设），后续版本补齐
+- [x] 村级全量（行政村/社区，民政地名口径）：**2,840 县 / 604,626 条**（行政村 484,499 + 社区 120,127），20 位地名标准码——发布于 GitHub Release 的按版本打包数据 tar.gz（`real-china-division-data-0.2.1.tar.gz`，含 `villages_v1.json.gz` / `villages.csv.gz` 各约 6MB + `DATA_MANIFEST.json` 与 `SHA256SUMS.txt` 供独立校验）。未覆盖 7 个特殊县域：金门、三沙市西沙区/南沙区、西藏岗巴/噶尔、云南大姚、新疆和安（新设），后续版本补齐
 - [x] 变更事件官方出处回填（`source_official` + `source_url`，民政部区划地名网年度变更页，183 条，含 2010-2017 的 108 条）——满足 L1/L2 可核验溯源
 - [ ] 变更事件 `doc_no` 文号回填：**决策为 L3 按需**（详见 [文号补全成本评估](docs/文号补全成本评估.md)）——中国政府网政策文件库 2010-2017 未数字化、国务院公报原刊入口受限、31 省公报异构，成本不抵 L1/L2 收益；当前以 `source_official`+`source_url` 作为可核验出处
 - [x] 季度准确率报告（黄金测试集驱动）：[2026Q3 报告](docs/accuracy-report-2026Q3.md)——110/110，含全量文件哈希供独立复现；季度更新
