@@ -15,6 +15,7 @@
 import json
 import re
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
 REAL_DATA = Path(__file__).parent / "data" / "divisions_v1.json"
@@ -147,25 +148,82 @@ for _p, _pv in DIV.items():
 
 CURRENT_CODES = set(CODE_PATH)
 CURRENT_NAMES = {seg for path, _ in CODE_PATH.values() for seg in path}
+# 名称 -> 现行路径索引（同名歧义标 None）；供语料入库事件（无 new_path/无码）反查现行路径
+NAME_PATH = {}
+for _pn, _ in CODE_PATH.values():
+    _nm = _pn[-1]
+    NAME_PATH[_nm] = _pn if _nm not in NAME_PATH else None
+# 通用通名：多城共有（如"东区/郊区/城区/市郊区/市中区"），单独作别名键会跨城误伤（v0.5 回归教训：
+# "嘉兴市郊区"曾命中梧州"市郊区"的历史映射），必须用上级城市名限定。
+GENERIC_TAILS = {"郊区", "城区", "市区", "矿区", "新区", "中区", "东区", "西区", "南区", "北区"}
 KNOWN_NAMES = CURRENT_NAMES | {tn for _tv in COUNTY_TOWNSHIPS.values() for tn in _tv}
 # 去后缀短形式（"宁波市"->"宁波"），供建制边界判断识别"城市名+县名"连写
 KNOWN_SHORT = {n.rstrip("市区县旗盟") for n in KNOWN_NAMES if len(n.rstrip("市区县旗盟")) >= 2}
+# 省名前缀（民政部语料入库事件的 old.name 带省名，如"浙江省嘉兴市郊区"，须剥离后作别名键）
+PROV_FULL = set(DIV.keys())
+PROV_SHORT = {_p.rstrip("省自治区") for _p in PROV_FULL if len(_p.rstrip("省自治区")) >= 2}
+_OLD_NAME_TARGETS = defaultdict(set)  # old.name -> 该旧称在事件库中指向的现行路径集合（>1 即同名歧义）
+
+
+def _strip_prov_prefix(name: str) -> str:
+    """剥离 old.name 冗余的省名前缀（"浙江省嘉兴市郊区" -> "嘉兴市郊区"）。
+    剩余长度 <3 时不剥离，避免把"吉林市"这类与省同名的区划剥坏。"""
+    for _pref in sorted(PROV_FULL | PROV_SHORT, key=len, reverse=True):
+        if name.startswith(_pref) and len(name) - len(_pref) >= 3:
+            return name[len(_pref):]
+    return name
+
+
+def _city_key(city_seg: str, name: str) -> str:
+    """城市限定别名键；去重重复的"市"字（"梧州市" + "市郊区" -> "梧州市郊区"）。"""
+    if city_seg.endswith("市") and name.startswith("市"):
+        return city_seg[:-1] + name
+    return city_seg + name
+
+
+def _is_generic(name: str) -> bool:
+    """通用通名判定：本身即通名（"郊区"），或三字且尾部为通名（"市郊区/铁西区/桥东区"）。"""
+    return name in GENERIC_TAILS or (len(name) == 3 and name[-2:] in GENERIC_TAILS)
+
+
 if EVENTS_FILE.exists():
     try:
         _edict = json.loads(EVENTS_FILE.read_text(encoding="utf-8"))
         EVENTS_META = _edict["meta"]
         EVENTS = _edict["events"]
+        # 先扫描：同一旧称指向多个不同"终态"现行路径 => 该名本身有歧义，别名必须城市限定。
+        # 只统计终态（末段仍在现行库中）：否则"宣化县→宣化县→宣化区"这类换码链会被误判为歧义。
+        for _e in _edict["events"]:
+            _s_on = _strip_prov_prefix((_e["old"] or {}).get("name") or "")
+            _s_np = _e.get("new_path") or []
+            if _s_on and _s_np and _s_np[-1] in CURRENT_NAMES:
+                _OLD_NAME_TARGETS[_s_on].add("-".join(_s_np))
         for _e in _edict["events"]:
             _on, _oc = _e["old"]["name"], _e["old"]["code"]
             _nn, _nc = _e["new"]["name"], _e["new"]["code"]
+            _op = _e.get("old_path") or []
             _np = _e.get("new_path") or []
+            _is_current = _nc in CURRENT_CODES
+            if not _is_current and _nn in NAME_PATH and NAME_PATH[_nn]:
+                _np = NAME_PATH[_nn]  # 语料入库事件无码/无路径：反查现行路径
+                _is_current = True
             if _oc and _nc and _oc != _nc and _nc in CURRENT_CODES:
                 OLD_CODE_MAP[_oc] = {"code": _nc, "path": _np, "year": _e["year"], "type": _e["type"]}
-            if (_on and _np and len(_np) >= 2 and _nc in CURRENT_CODES and _e["type"] != "撤销"
+            _on = _strip_prov_prefix(_on or "")
+            if (_on and _np and len(_np) >= 2 and _is_current and _e["type"] != "撤销"
                     and (_on.endswith(("县", "旗", "盟")) if len(_on) == 2
                          else _on.endswith(("县", "市", "区", "旗", "盟", "地区", "自治州", "自治县", "林区", "特区")))
-                    and _on not in CURRENT_NAMES):
-                HIST_ALIAS[_on] = "-".join(_np)
+                    and _on not in CURRENT_NAMES
+                    # 同名改码跨省 = 区划码被回收再分配给异地，不是沿革，禁止生成历史别名
+                    and not (_e["type"] == "同名改码" and len(_op) >= 2 and len(_np) >= 2
+                             and _op[0] != _np[0])):
+                if _is_generic(_on) or len(_OLD_NAME_TARGETS.get(_on, ())) > 1:
+                    # 通用名 / 同名歧义：用上级城市名限定（"邵阳市东区"、"嘉兴市郊区"）
+                    _key = _city_key(_op[-2], _on) if len(_op) >= 2 else None
+                else:
+                    _key = _on
+                if _key:
+                    HIST_ALIAS[_key] = "-".join(_np)
         EVENTS_META = dict(EVENTS_META, hist_alias=len(HIST_ALIAS), old_code_map=len(OLD_CODE_MAP))
     except Exception as e:
         print(f"[warn] historical_changes_v1.json 加载失败，历史映射降级为内置词典: {e}")
@@ -272,6 +330,14 @@ def _match_at(text: str, name: str, boundary2: bool = False):
                 if i < 0:
                     break
                 if boundary2 and len(form) == 2 and not _at_boundary(text, i):
+                    start = i + 1
+                    continue
+                # 去后缀短形式不得被"同名市"抢走（v0.5 回归教训："邵阳市东区"里的"邵阳"是市，
+                # 不可当作县"邵阳县"的短形式）。仅当"短形式+市"确实是一个已知区划名时才否定，
+                # 以保留"宣化县"→宣化区、"铜陵县"→铜陵市这类县改区/县改市的历史查询。
+                _nxt = text[i + len(form):i + len(form) + 1]
+                if (form != name and _nxt == "市" and name[-1] != "市"
+                        and (form + "市") in KNOWN_NAMES):
                     start = i + 1
                     continue
                 return form, i
@@ -392,6 +458,19 @@ def _resolve_core(raw: str) -> dict:
             return {"status": "unresolvable", "result": None, "codes": None, "confidence": 0.0,
                     "note": "未能识别任何区划实体"}
         refined = [h for h in hits if any(seg.rstrip("市") in text for seg in h["path"][:-1])]
+        # 文本显式含地级市名、但县级候选无一属于该市时，不得跨省张冠李戴（v0.5 回归教训：
+        # "邵阳市东区"曾落到四川攀枝花东区）。改为落到该市并如实标注区县级未识别。
+        if not refined:
+            _c_seen = max((c for p, pv in DIV.items() for c in pv["cities"] if c and c in text),
+                          key=len, default=None)
+            if _c_seen:
+                for p, pv in DIV.items():
+                    if _c_seen in pv["cities"]:
+                        return {"status": "resolve", "result": _fmt(p, _c_seen, None),
+                                "codes": {"province": pv["code"],
+                                          "city": pv["cities"][_c_seen].get("code"), "county": None},
+                                "confidence": 0.7,
+                                "note": f"市级命中；「{text}」的区县级在该市现行区划中无匹配（可能已撤销或更名）"}
         hits = refined or hits
         fulls = [h for h in hits if h.get("full")]
         if len(hits) > 1 and fulls and len(fulls) < len(hits):
