@@ -5,7 +5,13 @@ __pycache__/
 # 此前误被本文件排除，导致 GitHub Actions 从未运行；断言已核验：
 # 省级 33 / 县级 2847 / 事件 5274（2026-09-15）。
 # 原始大体积村级数据只留本地作增量更新底座，不入库（46MB 级）；
-# 对外分发走 GitHub Release 的按版本打包 tar.gz（由 build_l0_release.py 生成到仓库外 dist/，维护者手动上传）。
+# 对外分发走 GitHub Release 的按版本打包 tar.gz（由 build_l0_release.py 生成，维护者手动上传）。
 # 小体积引擎数据（divisions/townships/change_events/historical_changes 等 <3MB）随仓库走。
 data/villages.csv
 # 仓库内不保留 release/ 冗余目录：村级全量（52MB/46MB）不进 git，分发统一走 GitHub Release。
+
+# dist/ 放在仓库内，仅为"数据与仓库同处一处、上传 Release 时随手可取"，但**绝不入库**——
+# 内含 12MB 级版本化 tar.gz，一旦误提交就得重写历史清理（本项目已为此付过 git-filter-repo 的代价）。
+# 历次归档以 dist/real-china-division-data-<版本>.tar.gz 为准（文件名带版本号，可并存）；
+# 其内的 villages.csv.gz / DATA_MANIFEST.json / SHA256SUMS.txt 文件名固定，每次构建覆盖，只反映最新一次。
+dist/
