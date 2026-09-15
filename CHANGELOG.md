@@ -22,13 +22,15 @@
 ### 发布流程
 
 - **数据源与分发分层**：`data/`（仓库外本地）为最新原始数据底座（46MB 级，不入库，作增量更新用）；仓库内 `l0_repo/data/` 仅随版本提交小体积引擎数据（divisions/townships/change_events 等 <3MB 的 JSON+CSV）。
-- **仓库内不保留 `release/` 冗余目录**：村级全量（52MB JSON / 46MB CSV）过大不进 git；分发统一走 **GitHub Release**——`build_l0_release.py` 把现行村级数据打包成版本化 tar.gz 到仓库外的 `dist/`（`real-china-division-data-<版本>.tar.gz`，含 villages_v1.json.gz / villages.csv.gz + DATA_MANIFEST.json / SHA256SUMS.txt），由维护者手动上传到对应 git tag 的 Release。
-- **历史版本归档在 GitHub Release**（按 tag 区分，每个 tag 一个 tar.gz 附件）。
+- **仓库内不保留 `release/` 冗余目录**：村级全量（52MB JSON / 46MB CSV）过大不进 git；分发统一走 **GitHub Release**——`build_l0_release.py` 把**全量数据**（多级原始文件 + 村级 gz + 校验清单）打包成版本化 tar.gz 到 `l0_repo/dist/`（仓库内但已 gitignore、不入库，为的是上传时随手可取），由维护者手动上传到对应 git tag 的 Release。tar.gz 内含顶层目录 `real-china-division-data-<版本>/`，解压不污染下载目录。
+- **Release 上传 2 件**：① `real-china-division-data-<版本>.tar.gz`（全量数据）② `real-china-division-data-<版本>.tar.gz.sha256`（整包校验和，供 `sha256sum -c` 先验包再解压）。包内已含 `DATA_MANIFEST.json` / `SHA256SUMS.txt`（校验解压后的 8 个数据文件），**不再单独上传**——否则与包内同名文件混淆。
+- **Release notes 自动生成**：`build_l0_release.py` 从 CHANGELOG 抽取本版本条目（自动过滤「发布流程」等内部运维小节），生成 `dist/RELEASE_NOTES_<版本>.md`，上传时直接粘贴说明框，杜绝手写与 CHANGELOG 不一致。
+- **历史版本归档在 GitHub Release**（按 tag 区分）；dist/ 内只有带版本号的文件名（tar.gz / .sha256 / RELEASE_NOTES）可历次并存，其余固定名文件每次构建覆盖、只反映最新一次。
 - **版本号约定**：数据修订 `0.2.1` 式三位递增；小变动可在末尾追加构建号（如 `0.2.1.23153`）——CHANGELOG 写该号码，tar.gz 文件名与 git tag 自动跟随。
 - 不附带任何无压缩大文件（gunzip 即得）；`Don't trust, verify`：下载后校验 SHA256SUMS.txt。
 - 注：0.2.0 历史中的大体积副本已通过 git-filter-repo 改写历史清除（force push 完成于 2026-09-14），当前仓库已无 >5MB 残留 blob，克隆即清爽。
 
-> 发布提醒：本条目数据对应 git tag `0.2.1`；将 `dist/real-china-division-data-0.2.1.tar.gz` 上传至 GitHub Release（tag `0.2.1`）即完成对外归档。
+> 发布提醒：本条目数据对应 git tag `0.2.1`；将 `dist/` 下 `real-china-division-data-0.2.1.tar.gz` 与 `real-china-division-data-0.2.1.tar.gz.sha256` 两件上传至 GitHub Release（tag `0.2.1`），说明框粘贴 `dist/RELEASE_NOTES_0.2.1.md`，即完成对外归档。
 
 ## [0.2.0] - 2026-09-12
 
