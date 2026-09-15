@@ -2,7 +2,7 @@
  "meta": {
   "version": "0.4",
   "updated": "2026-09-12",
-  "note": "别名词典 v0.2：错字类条目已由引擎拼音纠错（pypinyin 可选依赖，unresolvable 时触发）替代而下线；其余条目为手工策展+事件库自动映射的兜底层。每条带 source 字段（溯源链原料）。历史变更条目是『20年变更事件库』的种子，现由 historical_changes_v1.json 系统化承接。",
+  "note": "别名词典 v0.2：错字类条目已由引擎拼音纠错（pypinyin 可选依赖，unresolvable 时触发）替代而下线；其余条目为手工策展+事件库自动映射的兜底层，每条带 source 字段。历史变更条目是『20年变更事件库』的种子，现由 historical_changes_v1.json 系统化承接。",
   "license_note": "词典规则与映射关系为自产数据；历史变更事实来自民政部公开公告"
  },
  "historical": [

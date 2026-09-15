@@ -2,35 +2,23 @@
 
 本仓库遵循 [语义化版本]：数据修订以次版本号递增，口径变更以主版本号递增并发布公告。
 
+## [未发布]
+
+- 引擎：移除 `alias_evidence()` 溯源接口及其来源收集逻辑
+- 文档：修正事件流「带文号」的不实描述（5,274 条中仅 123 条有批准文号）；数据字典与 Roadmap 表述中性化
+
 ## [0.2.1] - 2026-09-14
 
 ### 数据
 
 - **变更事件库 5,195 → 5,274 条**：新增民政部区划地名网《县级以上行政区划变更情况》官方年度页（1999-2026，GBK 编码）作为一手语料源，抓取 485 条官方变更记录（含省级政府公告来源+日期），比对后入库 64 条（更名 8 / 驻地迁移 9 / 撤销 3 / 新设 10 / 划转 16 / 区划调整 18），并暴露差分体系两大盲区——纯更名不改码、政府驻地迁移
-- **官方出处回填 183 条**：`source_official` + `source_url` 写回事件库（民政部年度变更页，可点击核验），其中 2010-2017 占 108 条；`change_events.csv` 同步新增 `source` / `source_official` / `source_url` 三列，对外 CSV 与 JSON 字段一致
+- **补录官方发布页链接 183 条**：`source_official` + `source_url` 写回事件库（民政部年度变更页），其中 2010-2017 占 108 条；`change_events.csv` 同步新增 `source` / `source_official` / `source_url` 三列，对外 CSV 与 JSON 字段一致
 - 事件类型新增「驻地迁移」「区划调整」（原差分体系盲区）
 
 ### 引擎
 
 - v0.5：修复 4 个真实解析 bug——①3 字通用名（市郊区/市中区等）误当裸别名键跨城误伤 ②同名改码跨省（区划码回收再分配）误生成别名 ③县名短形式被市名劫持（邵阳市东区→邵阳县）④上级不约束县级导致的跨省张冠李戴（邵阳市东区→攀枝花东区）
 - 历史别名映射 **521 → 888 条**；黄金测试集回归 104/104 → **110/110**（新增 6 例防回归用例）
-
-### 决策
-
-- `doc_no` 文号回填改为 **L3 按需**：中国政府网政策文件库 2010-2017 未数字化、国务院公报原刊入口受限、31 省公报异构，成本不抵 L1/L2 收益；L1/L2 以 `source_official`+`source_url` 作为可核验出处
-
-### 发布流程
-
-- **数据源与分发分层**：`data/`（仓库外本地）为最新原始数据底座（46MB 级，不入库，作增量更新用）；仓库内 `l0_repo/data/` 仅随版本提交小体积引擎数据（divisions/townships/change_events 等 <3MB 的 JSON+CSV）。
-- **仓库内不保留 `release/` 冗余目录**：村级全量（52MB JSON / 46MB CSV）过大不进 git；分发统一走 **GitHub Release**——`build_l0_release.py` 把**全量数据**（多级原始文件 + 村级 gz + 校验清单）打包成版本化 tar.gz 到 `l0_repo/dist/`（仓库内但已 gitignore、不入库，为的是上传时随手可取），由维护者手动上传到对应 git tag 的 Release。tar.gz 内含顶层目录 `real-china-division-data-<版本>/`，解压不污染下载目录。
-- **Release 上传 2 件**：① `real-china-division-data-<版本>.tar.gz`（全量数据）② `real-china-division-data-<版本>.tar.gz.sha256`（整包校验和，供 `sha256sum -c` 先验包再解压）。包内已含 `DATA_MANIFEST.json` / `SHA256SUMS.txt`（校验解压后的 8 个数据文件），**不再单独上传**——否则与包内同名文件混淆。
-- **Release notes 自动生成**：`build_l0_release.py` 从 CHANGELOG 抽取本版本条目（自动过滤「发布流程」等内部运维小节），生成 `dist/RELEASE_NOTES_<版本>.md`，上传时直接粘贴说明框，杜绝手写与 CHANGELOG 不一致。
-- **历史版本归档在 GitHub Release**（按 tag 区分）；dist/ 内只有带版本号的文件名（tar.gz / .sha256 / RELEASE_NOTES）可历次并存，其余固定名文件每次构建覆盖、只反映最新一次。
-- **版本号约定**：数据修订 `0.2.1` 式三位递增；小变动可在末尾追加构建号（如 `0.2.1.23153`）——CHANGELOG 写该号码，tar.gz 文件名与 git tag 自动跟随。
-- 不附带任何无压缩大文件（gunzip 即得）；`Don't trust, verify`：下载后校验 SHA256SUMS.txt。
-- 注：0.2.0 历史中的大体积副本已通过 git-filter-repo 改写历史清除（force push 完成于 2026-09-14），当前仓库已无 >5MB 残留 blob，克隆即清爽。
-
-> 发布提醒：本条目数据对应 git tag `0.2.1`；将 `dist/` 下 `real-china-division-data-0.2.1.tar.gz` 与 `real-china-division-data-0.2.1.tar.gz.sha256` 两件上传至 GitHub Release（tag `0.2.1`），说明框粘贴 `dist/RELEASE_NOTES_0.2.1.md`，即完成对外归档。
 
 ## [0.2.0] - 2026-09-12
 

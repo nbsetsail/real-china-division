@@ -1,6 +1,6 @@
 # 引擎准确率报告（2026Q3）
 
-> 生成于 2026-09-15。基准：自建黄金测试集 v1（110 例难例），黄金全集随 L3 审计交付提供，
+> 生成于 2026-09-15。基准：自建黄金测试集 v1（110 例难例）；
 > 本报告公开分类别通过率与全量文件哈希——持有同套文件者可独立复现（Don't trust, verify）。
 
 **总通过率：110/110（100.0%）**
@@ -37,12 +37,12 @@
 | `golden_test_set_v1.json` | `abfe7093d562dd19` |
 | `data/divisions_v1.json` | `f7d943ecf8188cc5` |
 | `data/townships_v1.json` | `f88ffd30b5d824b4` |
-| `data/historical_changes_v1.json` | `239c9f68dad7e63a` |
-| `aliases.json` | `b83485931f21b640` |
-| `pipeline_skeleton.py` | `503f00f12861fa01` |
+| `data/historical_changes_v1.json` | `414a84bb7a350317` |
+| `aliases.json` | `364e21b9036b50b0` |
+| `engine.py` | `c4c2a0eef0eccb55` |
 | `data/villages_v1.json` | `853cd85c30ab18eb` |
 
 ## 已知边界（诚实披露）
 - 1984 年前代码重编期事件存在串扰噪声；
 - 统计口径村级城乡分类代码无现行公开渠道，不提供、不编造；
-- 黄金集为自建基准，存在自我验证偏差；外部脏数据表现以 L3 审计交付实测为准。
+- 黄金集为自建基准，存在自我验证偏差；真实脏数据上的表现请自行抽样验证。
