@@ -66,6 +66,7 @@ SPECIAL_DIRECT = {
 }
 
 ALIAS_META = {"version": "builtin", "entries": len(ALIAS)}
+ALIAS_SRC = {}   # 别名 -> 词典原始条目（含 year/kind/source），供交付物输出「匹配依据/出处」
 if ALIAS_FILE.exists():
     try:
         _adict = json.loads(ALIAS_FILE.read_text(encoding="utf-8"))
@@ -73,6 +74,7 @@ if ALIAS_FILE.exists():
         for _key in ("historical", "landmarks", "simplified", "typo"):
             for _e in _adict.get(_key, []):
                 _flat[_e["alias"]] = _e["canonical"]
+                ALIAS_SRC[_e["alias"]] = _e
         ALIAS = _flat
         AMBIG_EXTRA = {k: v for k, v in _adict.get("ambiguous", {}).items()}
         MULTI_REGIONS = {k: v for k, v in _adict.get("multi", {}).items()}
@@ -134,6 +136,7 @@ for _p, _pv in DIV.items():
 # ---------------------------------------------------------------------------
 EVENTS_FILE = Path(__file__).parent / "data" / "historical_changes_v1.json"
 HIST_ALIAS, OLD_CODE_MAP, EVENTS_META, EVENTS = {}, {}, None, []
+HIST_ALIAS_SRC = {}   # 事件库自动生成的别名 -> {year, kind, source}
 CODE_PATH = {}
 for _p, _pv in DIV.items():
     CODE_PATH[_pv["code"]] = ([_p], {"province": _pv["code"]})
@@ -224,6 +227,11 @@ if EVENTS_FILE.exists():
                     _key = _on
                 if _key:
                     HIST_ALIAS[_key] = "-".join(_np)
+                    # 自动别名的溯源：记录事件年份/类型/来源，供交付物输出「匹配依据」
+                    HIST_ALIAS_SRC[_key] = {"alias": _key, "canonical": "-".join(_np),
+                                            "year": _e["year"], "kind": _e["type"],
+                                            "source": _e.get("source"),
+                                            "source_url": _e.get("source_url")}
         EVENTS_META = dict(EVENTS_META, hist_alias=len(HIST_ALIAS), old_code_map=len(OLD_CODE_MAP))
     except Exception as e:
         print(f"[warn] historical_changes_v1.json 加载失败，历史映射降级为内置词典: {e}")
@@ -297,7 +305,10 @@ def _at_boundary(text: str, i: int) -> bool:
                for _l in (4, 3, 2))
 
 
-def _apply_alias(text: str) -> str:
+def _apply_alias(text: str, _hits: list = None) -> str:
+    # _hits：可选的溯源收集器。命中别名时把词典/事件库的原始条目（含 year/kind/source）
+    # 追加进来，供交付物输出「匹配依据 / 出处」——可追溯是我们对阿里云的硬差异化，
+    # 但溯源信息若只留在内部而不输出，对客户等于不存在。
     # 防误伤三条：①别名后紧跟建制后缀且拼成已知区划名（如「沙县」+「区」->「沙县区」）时不替换；
     # ②别名必须位于建制边界——单字别名「京」不得命中「南京」词中（v0.3 回归教训）；
     # ③前邻是已知区划名结尾时视为边界（「宁波鄞州」的鄞州）
@@ -316,8 +327,43 @@ def _apply_alias(text: str) -> str:
                 start = j
                 continue
             text = text[:i] + ALIAS_ALL[k] + text[j:]
+            if _hits is not None:
+                _src = ALIAS_SRC.get(k) or HIST_ALIAS_SRC.get(k)
+                if _src and _src not in _hits:
+                    _hits.append(_src)
             start = i + len(ALIAS_ALL[k])
     return text
+
+
+def alias_evidence(raw: str) -> dict:
+    """返回地址命中别名的溯源信息，供交付物输出「匹配依据 / 出处」两列。
+
+    为什么单独一个函数而不是改 _resolve_core：_resolve_core 有十余个返回点，逐个加字段
+    易漏且风险高。这里改为纯函数复算一次别名替换（短字符串操作，开销可忽略），
+    不触碰解析主路径——清洗结果因此完全不受影响，只多输出信息。
+
+    未命中别名时两项为空，语义为「现行区划直接匹配」（不需要历史依据）。
+    """
+    hits = []
+    _apply_alias(_strip_noise(raw), hits)
+    if not hits:
+        return {"依据": "", "出处": ""}
+    parts, srcs = [], []
+    for h in hits:
+        a = h.get("alias") or ""
+        c = h.get("canonical") or ""
+        y = h.get("year")
+        k = h.get("kind") or ""
+        parts.append(f"{y} 年{k}：{a}→{c}" if y else (f"{k}：{a}→{c}" if k else f"{a}→{c}"))
+        # 出处优先级：可点开核验的官方 URL > 官方/标准来源名。
+        # 来源名只取括号前的主干——"GB/T 2260 逐年快照差分（国家统计局官方口径…）"里
+        # 括号内的口径说明与第三方项目名对客户是噪声，只会稀释可信度。
+        s = (h.get("source_url") or "").strip()
+        if not s.startswith("http"):
+            s = (h.get("source_official") or h.get("source") or "").split("（")[0].strip()
+        if s and s not in srcs:
+            srcs.append(s)
+    return {"依据": "；".join(parts), "出处": srcs[0] if srcs else ""}
 
 
 def _match_at(text: str, name: str, boundary2: bool = False):
