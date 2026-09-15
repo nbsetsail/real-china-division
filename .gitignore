@@ -1,7 +1,9 @@
-.github/
 __pycache__/
 *.pyc
 .pytest_cache/
+# 注：.github/ 必须入库——CI 配置（workflows/ci.yml）随仓库分发才会生效。
+# 此前误被本文件排除，导致 GitHub Actions 从未运行；断言已核验：
+# 省级 33 / 县级 2847 / 事件 5274（2026-09-15）。
 # 原始大体积村级数据只留本地作增量更新底座，不入库（46MB 级）；
 # 对外分发走 GitHub Release 的按版本打包 tar.gz（由 build_l0_release.py 生成到仓库外 dist/，维护者手动上传）。
 # 小体积引擎数据（divisions/townships/change_events/historical_changes 等 <3MB）随仓库走。

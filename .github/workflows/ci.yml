@@ -1,0 +1,28 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install optional deps
+        run: pip install pypinyin pytest || true
+      - name: Engine smoke tests
+        run: python -m pytest tests/ -q
+      - name: Data integrity
+        run: |
+          python - <<'EOF'
+          import json
+          d = json.load(open("data/divisions_v1.json", encoding="utf-8"))
+          assert len(d["provinces"]) == 33, "省级数量异常"
+          n = sum(len(c["counties"]) for p in d["provinces"].values() for c in p["cities"].values())
+          assert n == 2847, f"县级数量异常: {n}"
+          e = json.load(open("data/historical_changes_v1.json", encoding="utf-8"))
+          assert e["meta"]["counts"]["total"] > 5000, "事件库规模异常"
+          print("data ok:", len(d["provinces"]), "provinces,", n, "counties,", e["meta"]["counts"]["total"], "events")
+          EOF
