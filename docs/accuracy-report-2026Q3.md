@@ -1,6 +1,6 @@
 # 引擎准确率报告（2026Q3）
 
-> 生成于 2026-09-14。基准：自建黄金测试集 v1（110 例难例），黄金全集随 L3 审计交付提供，
+> 生成于 2026-09-15。基准：自建黄金测试集 v1（110 例难例），黄金全集随 L3 审计交付提供，
 > 本报告公开分类别通过率与全量文件哈希——持有同套文件者可独立复现（Don't trust, verify）。
 
 **总通过率：110/110（100.0%）**
@@ -39,7 +39,7 @@
 | `data/townships_v1.json` | `f88ffd30b5d824b4` |
 | `data/historical_changes_v1.json` | `239c9f68dad7e63a` |
 | `aliases.json` | `b83485931f21b640` |
-| `pipeline_skeleton.py` | `c4c2a0eef0eccb55` |
+| `pipeline_skeleton.py` | `503f00f12861fa01` |
 | `data/villages_v1.json` | `853cd85c30ab18eb` |
 
 ## 已知边界（诚实披露）
