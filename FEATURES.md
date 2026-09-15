@@ -69,13 +69,15 @@
 
 ## 升级路径
 
-自托管社区版 → 业务量上来 / 需要持续更新 → **改 `base_url` 切到专业版**，代码一行不用动。
+自托管社区版 → 业务量上来 / 需要持续更新 → **改地址 + 带 key 切到专业版**，代码一行不用动。
+两者是同一套 API 契约：
 
-```python
-# 社区版自托管
-client = DivisionClient(base_url="http://localhost:8911")
-# 专业版
-client = DivisionClient(base_url="https://api.example.com", api_key="...")
+```bash
+# 社区版自托管（REST 规划中，当前以 engine.py 库形式使用）
+curl "http://localhost:8911/api/clean?raw=襄樊市樊城区"
+
+# 专业版：只换域名 + 带鉴权，路径与参数完全一致
+curl -H "X-API-Key: <key>" "https://<专业版域名>/api/clean?raw=襄樊市樊城区"
 ```
 
 ## 自托管
@@ -84,9 +86,20 @@ client = DivisionClient(base_url="https://api.example.com", api_key="...")
 对有数据合规顾虑的团队是硬牌。
 
 ```bash
-pip install -r requirements.txt
-python -c "import engine; print(engine.resolve('浙江杭州市余杭区文一西路969号'))"
+git clone https://github.com/nbsetsail/real-china-division.git
+cd real-china-division
+# 引擎零依赖；拼音纠错为可选增强
+pip install pypinyin
 ```
+
+```python
+from engine import resolve, resolve_by_code
+
+resolve("襄樊市樊城区")      # 历史名 → 湖北省-襄阳市-樊城区
+resolve_by_code("510124")    # 历史码回溯 → 四川省-成都市-郫都区，2016 年撤县设区
+```
+
+村级全量数据（604,626 条）不在仓库内，见 [GitHub Release](../../releases) 的按版本数据包。
 
 ## License
 
