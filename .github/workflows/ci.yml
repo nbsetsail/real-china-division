@@ -19,7 +19,10 @@ jobs:
           python - <<'EOF'
           import json
           d = json.load(open("data/divisions_v1.json", encoding="utf-8"))
-          assert len(d["provinces"]) == 33, "省级数量异常"
+          # 34 = 31 大陆省级 + 香港 + 澳门 + 台湾
+          # 台湾省 2026-09-16 按 GB/T 2260 补录（国家地名信息库未收录），详见 divisions_v1.json 的 meta.patched
+          assert len(d["provinces"]) == 34, "省级数量异常"
+          assert d["provinces"]["台湾省"]["code"] == "710000000000", "台湾省省级码异常"
           n = sum(len(c["counties"]) for p in d["provinces"].values() for c in p["cities"].values())
           assert n == 2847, f"县级数量异常: {n}"
           e = json.load(open("data/historical_changes_v1.json", encoding="utf-8"))

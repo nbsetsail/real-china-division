@@ -3,7 +3,7 @@
 区划解析引擎 v1（不留存架构）
 ====================================
 相对 v0 的升级：
-  - 数据底座接入真实官方数据（中国·国家地名信息库，33省/341地级/2847县级，带12位官方码）
+  - 数据底座接入真实官方数据（中国·国家地名信息库，34省级/341地级/2847县级，带12位官方码；台湾省按 GB/T 2260 补录）
   - 解析结果输出官方 12 位区划码（双口径的统计侧映射待村级两码渠道摸底后接入）
   - 其余原则不变：无状态、置信度分级、诚实拒绝、歧义输出候选
 
@@ -60,6 +60,10 @@ UNRESOLVABLE_WORDS = ["苏北", "苏南", "珠三角", "长三角", "某某"]
 REGION_GENERIC = {
     "华北", "华南", "华东", "华西", "华中", "东北", "西北", "西南", "东南",
     "中原", "江南", "江淮", "关中", "塞北", "岭南", "京津冀", "长三角", "珠三角",
+    # 2026-09-17 补：方位泛称此前漏收，会被形近候选集捡成县名
+    # （「北方」→北屯市、「西部」→西陵区——校准集 C013 回归教训）
+    "北方", "南方", "东方", "西方", "东部", "西部", "南部", "北部", "中部",
+    "沿海", "边疆", "内陆", "内地", "中国北方", "中国南方",
 }
 SPECIAL_DIRECT = {
     "西咸新区": ("陕西省-西安市/咸阳市", "国家级新区，非民政正式建制"),
@@ -143,6 +147,7 @@ EVENTS_FILE = Path(__file__).parent / "data" / "historical_changes_v1.json"
 #   码位改派 = 同一码在不同年份指向不同县（年度集合差分的误判产物，见 scripts/repair_events.py）
 CODE_REASSIGN = "码位改派"
 HIST_ALIAS, OLD_CODE_MAP, EVENTS_META, EVENTS = {}, {}, None, []
+_ABOLISHED = {}   # 撤销迁移索引：{省名: {旧县名: {path, year, code, name}}}（B-26）
 CODE_PATH = {}
 for _p, _pv in DIV.items():
     CODE_PATH[_pv["code"]] = ([_p], {"province": _pv["code"]})
@@ -217,6 +222,21 @@ if EVENTS_FILE.exists():
         _edict = json.loads(EVENTS_FILE.read_text(encoding="utf-8"))
         EVENTS_META = _edict["meta"]
         EVENTS = _edict["events"]
+        # B-28 链式追尾索引：old.code -> 后续事件的 new.code（每码取第一条，确定性）
+        _next_by_old = {}
+        for _e2 in _edict["events"]:
+            _oc2 = (_e2.get("old") or {}).get("code")
+            _nc2 = (_e2.get("new") or {}).get("code")
+            if _oc2 and _nc2 and _oc2 != _nc2 and _oc2 not in _next_by_old:
+                _next_by_old[_oc2] = _nc2
+
+        def _chain_to_current(code):
+            """沿 old.code -> new.code 事件链追到现行码（≤6 跳，防环）。"""
+            _seen = set()
+            while code and code not in CURRENT_CODES and code not in _seen:
+                _seen.add(code)
+                code = _next_by_old.get(code)
+            return code if code in CURRENT_CODES else None
         # 先扫描：同一旧称指向多个不同"终态"现行路径 => 该名本身有歧义，别名必须城市限定。
         # 只统计终态（末段仍在现行库中）：否则"宣化县→宣化县→宣化区"这类换码链会被误判为歧义。
         for _e in _edict["events"]:
@@ -240,14 +260,30 @@ if EVENTS_FILE.exists():
             if not _is_current and _nn in NAME_PATH and NAME_PATH[_nn]:
                 _np = NAME_PATH[_nn]  # 语料入库事件无码/无路径：反查现行路径
                 _is_current = True
+            elif not _is_current and _oc and _nc:
+                # B-28（2026-09-17）链式追尾：new 指向已不存在的中间建制
+                # （昌潍地区→潍坊地区→潍坊市）时沿事件链追到现行码——
+                # 否则两跳沿革链整段被 _is_current 守卫丢弃。防环 ≤6 跳。
+                _c2 = _chain_to_current(_nc)
+                if _c2 and _c2 in CODE_PATH:
+                    _nc, _np = _c2, list(CODE_PATH[_c2][0])
+                    _nn = _np[-1]
+                    _is_current = True
             elif len(_np) == 1 and _is_current and NAME_PATH.get(_np[0]):
                 # 语料 new_path 只给末段、缺省/市（如"万县区→万州区"的 new_path=['万州区']）：
                 # 按现行库补全省/市。否则会被下方 len(_np)>=2 的长度守卫整体丢弃（v3 校准集回归教训）。
                 _np = NAME_PATH[_np[0]]
             if _oc and _nc and _oc != _nc and _nc in CURRENT_CODES:
                 OLD_CODE_MAP[_oc] = {"code": _nc, "path": _np, "year": _e["year"], "type": _e["type"]}
+                if _e["type"] == "撤销" and len(_np) >= 2:
+                    _ABOLISHED.setdefault(_np[0], {})[(_e["old"] or {}).get("name") or ""] = {
+                        "path": _np, "year": _e["year"], "code": _nc, "name": _np[-1]}
             _on = _strip_prov_prefix(_on or "")
-            if (_on and _np and len(_np) >= 2 and _is_current and _e["type"] != "撤销"
+            # 撤销类既往一律排除（612 条中 610 条年度差分产物 old 残缺）。B-25（2026-09-17）
+            # 起对人工策展的成对撤销事件放开（当前仅渝北区/江北区→两江新区 2 条）：
+            # 旧区名 → 新归属，支撑「旧地址自动迁移到新区划」。残缺撤销仍被 _is_current 等守卫排除。
+            if (_on and _np and len(_np) >= 2 and _is_current
+                    and (_e["type"] != "撤销" or _oc)
                     and (_on.endswith(("县", "旗", "盟")) if len(_on) == 2
                          else _on.endswith(("县", "市", "区", "旗", "盟", "地区", "自治州", "自治县", "林区", "特区")))
                     and _on not in CURRENT_NAMES
@@ -265,6 +301,284 @@ if EVENTS_FILE.exists():
     except Exception as e:
         print(f"[warn] historical_changes_v1.json 加载失败，历史映射降级为内置词典: {e}")
         EVENTS_META = None
+
+# B-30：撤销迁移旧名反查索引 {旧县名: [{prov, path, year, code, name}]}。
+_ABOLISHED_BY_NAME = {}
+for _prov, _names in _ABOLISHED.items():
+    for _nm, _mig in _names.items():
+        if _nm:
+            _ABOLISHED_BY_NAME.setdefault(_nm, []).append(dict(_mig, prov=_prov))
+
+# ---------------------------------------------------------------------------
+# B-31（2026-09-17）：副表解析通道（港澳台下辖）。
+# 主底座按国标口径不含港澳台下辖（一律无国标码），此前清洗时港澳台地址一律归纳到省级。
+# 副表数据存在时（专业版/L1；社区版不带这些数据文件 → 通道自动关闭，退回原省级+0.6 行为），
+# 且输入含港澳台指示词或省级命中港澳台时启用：
+#   台湾省 → 县市(county) → 乡镇/区(town，注意台湾「区」是乡级)
+#   香港   → 18 地方行政区(district)；村名（地址要素）用于推断所属区
+#   澳门   → 堂区(parish)；街道名（地址要素）用于推断所属堂区
+# 结果路径只含行政区划层（D8 口径：村/街道是地址要素，不作层级），地址要素写入 note 与 codes。
+# ---------------------------------------------------------------------------
+_SUB_DIR = Path(__file__).parent / "data"
+_SUB = {"TW": {}, "HK": {}, "MO": {}}      # 名 → [实体]（行政区划层）
+_SUB_ADDR = {"HK": {}, "MO": {}}           # 名 → [实体]（地址要素层：村/街道）
+_SUB_UID = {}                              # uid → 实体（取规范名）
+_SUB_LOADED = False
+_PROV_SUB = {"台湾省": ("TW", "710000000000"),
+             "香港特别行政区": ("HK", "810000000000"),
+             "澳门特别行政区": ("MO", "820000000000")}
+# 指示词（含常用短形式；不用单字"台/港/澳"以免误伤 台州/港北/澳头）
+_SUB_IND = (("台湾省", ("台湾省", "台湾"), "TW", "710000000000"),
+            ("香港特别行政区", ("香港特别行政区", "香港"), "HK", "810000000000"),
+            ("澳门特别行政区", ("澳门特别行政区", "澳门"), "MO", "820000000000"))
+
+
+def _load_sub_tables():
+    global _SUB_LOADED
+    if _SUB_LOADED:
+        return
+    _SUB_LOADED = True
+
+    def _rd(fn):
+        p = _SUB_DIR / fn
+        if not p.exists():
+            return None
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+
+    tw = _rd("tw_divisions_v1.json")
+    if tw:
+        for e in tw.get("entities") or []:
+            if e.get("name_zh"):
+                _SUB["TW"].setdefault(e["name_zh"], []).append(e)
+                _SUB_UID[e["uid"]] = e
+    hk = _rd("hkmo_divisions_v1.json")
+    if hk:
+        for e in hk.get("entities") or []:
+            reg = "HK" if str(e.get("uid", "")).startswith("HK-") else "MO"
+            _SUB_UID[e["uid"]] = e
+            for k in {e.get("name_zh"), e.get("name_raw")}:
+                if k:
+                    _SUB[reg].setdefault(k, []).append(e)
+    hv = _rd("hk_villages_v1.json")
+    if hv:
+        for e in hv.get("entities") or []:
+            for k in {e.get("name"), e.get("name_tc")} | set(e.get("alias") or []):
+                if k:
+                    _SUB_ADDR["HK"].setdefault(k, []).append(e)
+    ms = _rd("mo_streets_v2.json")
+    if ms:
+        for e in ms.get("entities") or []:
+            for k in {e.get("name"), e.get("name_sc"), e.get("name_tc")} | set(e.get("alias") or []):
+                if k:
+                    _SUB_ADDR["MO"].setdefault(k, []).append(e)
+
+
+def _canon(uid):
+    """uid → 副表规范名（港：元朗区 / 澳：大堂区）。"""
+    e = _SUB_UID.get(uid) or {}
+    return e.get("name_zh") or e.get("name")
+
+
+def _sub_match(region, text, pcode, allow_plain=False):
+    """副表内解析：返回 resolve/ambiguous 结果 dict，或 None（无命中）。"""
+    _load_sub_tables()
+    tbl = _SUB.get(region) or {}
+    lv = {}
+    for nm, entries in tbl.items():
+        if len(nm) < 2 or not _match(text, nm):
+            continue
+        if allow_plain and nm in CURRENT_NAMES:   # 纯名通道：与大陆现行名冲突者不抢
+            continue
+        lv.setdefault(entries[0].get("level"), []).append((nm, entries))
+
+    # ---- 行政区划层 ----
+    if lv:
+        if region == "TW":
+            def _pick(lvl):
+                """整名优先（"新竹市" 不得被 rstrip 短形式"新竹"截去命中"新竹县"）。"""
+                lst = lv.get(lvl) or []
+                if not lst:
+                    return None
+                exact = [x for x in lst if x[0] in text]
+                return sorted(exact or lst, key=lambda x: -len(x[0]))[0]
+
+            county, town = _pick("county"), _pick("town")
+            if county and len({_path_of_tw(e) for e in county[1]}) > 1:
+                return _sub_ambiguous(county[1], "台湾省")
+            if town and len({(e.get("parent_name"), e.get("name_zh")) for e in town[1]}) > 1:
+                return _sub_ambiguous(town[1], "台湾省")
+            if town and county and town[1][0].get("parent_name") != county[0]:
+                town = None          # 乡镇不属该县市：防"台北市+三民区"混搭
+            if town:
+                pname = town[1][0].get("parent_name")
+                path = (["台湾省", pname, town[0]] if pname else ["台湾省", town[0]])
+                return _sub_result(path, pcode, town[1][0]["uid"],
+                                   "台湾「区」为乡级（与大陆县级「区」层级不同）")
+            if county:
+                return _sub_result(["台湾省", county[0]], pcode, county[1][0]["uid"], None)
+        else:  # HK / MO
+            level = "district" if region == "HK" else "parish"
+            _hs = lv.get(level) or []
+            _ex = [x for x in _hs if x[0] in text]
+            hits = sorted(_ex or _hs, key=lambda x: -len(x[0]))
+            if hits:
+                nm, entries = hits[0]
+                if len({e.get("uid") for e in entries}) > 1:
+                    return _sub_ambiguous(entries, "香港特别行政区" if region == "HK" else "澳门特别行政区")
+                prov = "香港特别行政区" if region == "HK" else "澳门特别行政区"
+                note = "澳门堂区无法人地位，属区划类比层" if region == "MO" else None
+                # 附带地址要素（村/街道）信息：不占行政层级（D8 口径），只入 note/codes
+                _a = _sub_addr_hit(region, text)
+                _auid = None
+                if _a:
+                    _txt, _auid, _ae = _a
+                    note = (note + "；" if note else "") + f"地址要素：{_txt}"
+                return _sub_result([prov, entries[0]["name_zh"]], pcode, entries[0]["uid"], note,
+                                   addr_uid=_auid)
+
+    # ---- 地址要素层（村/街道）→ 推断所属区/堂区 ----
+    _a = _sub_addr_hit(region, text)
+    if _a:
+        _txt, _auid, e = _a
+        if region == "HK":
+            duid = e.get("district_uid")
+            dname = _canon(duid) or e.get("district_tc")
+            if not dname:
+                return None
+            note = f"地址要素：{_txt}；官方声明仅限选举用途"
+            return _sub_result(["香港特别行政区", dname], pcode, duid, note, addr_uid=_auid, conf=0.8)
+        puid = e.get("parish_uid")
+        pname = _canon(puid) or e.get("parish")
+        if not pname:
+            return None
+        note = f"地址要素：{_txt}"
+        return _sub_result(["澳门特别行政区", pname], pcode, puid, note, addr_uid=_auid, conf=0.8)
+    return None
+
+
+def _path_of_tw(e):
+    return (e.get("parent_name") or "") + "-" + (e.get("name_zh") or "")
+
+
+def _sub_addr_hit(region, text):
+    """地址要素命中（村/街道）→ (要素名, uid) 或 None。"""
+    addr = _SUB_ADDR.get(region) or {}
+    hits = sorted(((len(k), k, v) for k, v in addr.items() if len(k) >= 2 and _match(text, k)),
+                  key=lambda x: -x[0])
+    if not hits:
+        return None
+    _, key, entries = hits[0]
+    e = entries[0]
+    label = e.get("name_tc") or e.get("name") or key
+    if e.get("rcom_tc"):
+        label += f"（{e['rcom_tc']}乡事委员会）"
+    elif e.get("parish"):
+        label += f"（{e['parish']}，澳门街道非建制）"
+    return label, e.get("uid"), e
+
+
+def _sub_result(path, pcode, uid, note, addr_uid=None, conf=0.9):
+    # sub_name/sub_level 供清洗输出的列映射使用（副层级为类比层级：cn_level）
+    codes = {"province": pcode}
+    e = _SUB_UID.get(uid) or {}
+    if e.get("name_zh"):
+        codes["sub_name"] = e["name_zh"]
+        codes["sub_level"] = e.get("cn_level")
+    if uid:
+        codes["sub_uid"] = uid
+    if addr_uid:
+        codes["addr_uid"] = addr_uid
+    base = f"副表（{path[0]}下辖无国标码）：" + "-".join(path)
+    return {"status": "resolve", "result": "-".join(path), "codes": codes,
+            "confidence": conf,
+            "note": base + ("；" + note if note else "")}
+
+
+def _sub_ambiguous(entries, prov):
+    cands = []
+    for e in entries:
+        parent = e.get("parent_name")
+        if e.get("level") == "county":
+            cands.append(f"{prov}-{e.get('name_zh')}")
+        elif parent:
+            cands.append(f"{prov}-{parent}-{e.get('name_zh')}")
+        else:
+            cands.append(f"{prov}-{e.get('name_zh')}")
+    return {"status": "ambiguous", "result": list(dict.fromkeys(cands)), "codes": None,
+            "confidence": 0.8, "note": f"同名区划多处存在（{prov}副表），输出候选集"}
+
+
+def _sub_channel(raw, out):
+    """在 _resolve_core 结果之上尝试副表解析（B-31）。返回替换结果或 None。"""
+    if not raw or not raw.strip():
+        return None
+    text = raw.strip()
+    _load_sub_tables()
+    if not any(_SUB.values()):
+        return None
+    # 主解析已给出的省级（首段）——用于「不得越权覆盖大陆解析」的判断
+    _main_prov = str(out.get("result") or "").split("-")[0] if isinstance(out.get("result"), str) else ""
+    # 1) 输入含港澳台指示词（含短形式）→ 用全区划名匹配（副表名可直接命中）
+    for pn, inds, region, pcode in _SUB_IND:
+        ind = next((x for x in inds if x in text), None)
+        if ind is None:
+            continue
+        # 守卫①：指示词须在地址头部（位置 0 或前 2 字内），或后接行政区划后缀
+        _i = text.find(ind)
+        _after = text[_i + len(ind):_i + len(ind) + 1]
+        if not (_i == 0 or (_i <= 2 and _after in "区市县岛") or _after in "区市县岛"):
+            continue
+        # 守卫②：主解析已归属大陆省份的，一律不覆盖（"青岛市市南区香港中路76号" 里的
+        # 「香港」是路名，2026-09-17 实测误判为香港南区——回归 B-31）
+        if _main_prov and _main_prov not in ("台湾省", "香港特别行政区", "澳门特别行政区") \
+                and out.get("status") != "unresolvable":
+            return None
+        r = _sub_match(region, text, pcode)
+        if r:
+            if r["result"] == pn:      # 只命中省级本身，不覆盖原省级结果
+                return None
+            return r
+        return None
+    # 2) 纯名通道：完全未解析，且名不在大陆现行名集合（避免"松山区"抢内蒙古）
+    if out.get("status") == "unresolvable":
+        found, single = [], None
+        for region, pcode in (("TW", "710000000000"), ("HK", "810000000000"), ("MO", "820000000000")):
+            r = _sub_match(region, text, pcode, allow_plain=True)
+            if not r:
+                continue
+            if r["status"] == "ambiguous":
+                found.extend(r["result"])
+            else:
+                found.append(r["result"])
+                single = single or r
+        found = list(dict.fromkeys(found))
+        if len(found) > 1:      # 跨区同名（「中西区」= 香港 ∥ 台南）→ 候选集
+            return {"status": "ambiguous", "result": found, "codes": None, "confidence": 0.8,
+                    "note": "该名在港澳台副表中多处存在（无国标码），输出候选集"}
+        if len(found) == 1:
+            return single
+    return None
+
+ALIAS_ALL = {**HIST_ALIAS, **ALIAS}  # 手工词典优先于自动生成
+
+# ---------------------------------------------------------------------------
+# 拼音纠错（C3）：同音错字免规则命中（"深镇/山冬/杭洲"），替代 aliases.json 错字硬编码。
+# pypinyin 为可选依赖：未安装时纠错降级关闭，主路径（规则+词典）不受影响。
+# 索引惰性构建（首次纠错时），仅收录省/市/县三级约 6.4k 形态。
+# ---------------------------------------------------------------------------
+try:
+    from pypinyin import lazy_pinyin
+    _HAS_PY = True
+except Exception:
+    _HAS_PY = False
+
+PY_INDEX = None
+
+
+
 
 ALIAS_ALL = {**HIST_ALIAS, **ALIAS}  # 手工词典优先于自动生成
 
@@ -323,6 +637,23 @@ def _strip_noise(text: str) -> str:
 
 _SUFFIX_CHARS = "区县市旗盟镇乡村"
 
+# 道路通名：真实地址里"以省/市短名命名的道路"极多（青岛香港中路、广州北京路、上海南京东路，
+# 以及各城市常见的山西路 / 河北路 / 江苏路）。省名**短形式**后面紧接道路通名时，它是路名的一部分、
+# 不是区划——不拦就会把「上海市香港路」解析成香港特别行政区（2026-09-16 回归教训）。
+_ROAD_TAIL = "路街道巷弄"              # 单字通名：窗口末字命中即判为道路
+_ROAD_WORD = ("胡同", "大街", "大道", "环路", "公路")
+
+
+def _next_looks_like_road(text: str, end: int, span: int = 3) -> bool:
+    """从 end 起的 1..span 字窗口是否落在道路通名上（"路" / "中路" / "大街" / "大道"）。"""
+    for L in range(1, span + 1):
+        seg = text[end:end + L]
+        if len(seg) < L:
+            break
+        if seg in _ROAD_WORD or seg[-1] in _ROAD_TAIL:
+            return True
+    return False
+
 
 def _at_boundary(text: str, i: int) -> bool:
     """位置 i 是否处于建制边界：串首 / 前邻非汉字 / 前邻是边界字 / 前缀以**省/市/县名**结尾。
@@ -378,6 +709,12 @@ def _apply_alias(text: str) -> str:
                    for _L in range(len(k) + 1, len(k) + 8)):
                 start = i + 1
                 continue
+            # 别名后面紧接道路通名时不替换：它是路名的一部分，不是区划简称
+            # （"上海市香港路"里的"香港"不得展开成"香港特别行政区"，否则整条地址会被
+            #  判成香港；"台湾街""江苏路"同理——2026-09-16 回归教训）。
+            if _next_looks_like_road(text, j):
+                start = j
+                continue
             text = text[:i] + ALIAS_ALL[k] + text[j:]
             start = i + len(ALIAS_ALL[k])
     return text
@@ -428,6 +765,9 @@ def _fuzzy_in(text: str, name: str):
             win = text[i:i + n]
             if sum(a != b for a, b in zip(win, form)) == 1:
                 if not _at_boundary(text, i):
+                    continue
+                # 命中窗口本身落在道路通名上（"山西路"距"山西省"仅 1 字）→ 是路名，不是错字
+                if _next_looks_like_road(text, i + n):
                     continue
                 return form, win
     return None
@@ -507,7 +847,14 @@ def _resolve_core(raw: str) -> dict:
 
     for key, (loc, why) in SPECIAL_DIRECT.items():
         if key in text:
-            return {"status": "special", "result": loc, "codes": None, "confidence": 0.8,
+            _loc = loc
+            # 「需按上级城市落位」类（如"高新技术产业开发区"）：所属地级可从原文
+            # 开头的地级短名确定（B-23，2026-09-17）
+            if "需按上级城市" in loc:
+                _dev = _dev_city_at_head(text)
+                if _dev:
+                    _loc = _dev
+            return {"status": "special", "result": _loc, "codes": None, "confidence": 0.8,
                     "note": f"特殊口径：{why}"}
 
     if text in AMBIG_EXTRA:
@@ -527,6 +874,11 @@ def _resolve_core(raw: str) -> dict:
                 _i = text.find(m)
                 if any(text[_i:_i + _L] in KNOWN_NAMES and text[_i:_i + _L] != p
                        for _L in range(len(m) + 1, len(m) + 10)):
+                    continue
+                # 短形式后面紧接道路通名 → 它是路名的一部分，不是区划
+                # （"上海市香港路"不得落到香港特别行政区；"山西路"不得落到山西省）。
+                # 仅对**短形式**生效：全名（"山西省太原市"）不受影响。
+                if _next_looks_like_road(text, _i + len(m)):
                     continue
             prov_found.append((p, 1.0 if m == p else 0.9, m))
         else:
@@ -632,8 +984,38 @@ def _resolve_core(raw: str) -> dict:
         if len(hits) > 1 and len({h["pos"] for h in hits}) > 1:
             # 多县命中但位置不同：地址语序靠前者胜出（"昆山开发区前进东路"——昆山在句首，前进区在佳木斯）
             hits = [min(hits, key=lambda h: h["pos"])]
+        _ev_town = None
+        if len(hits) > 1:
+            # 街道证据消歧（B-24，2026-09-17）：同名县多处时，若文本中的乡镇/街道名
+            # （≥3 字）唯一归属某一候选县，以其消歧；证据冲突/无证据维持歧义。
+            _ev = _township_evidence(hits, text)
+            if _ev:
+                hits, _ev_town = [_ev[0]], _ev[1]
         if len(hits) == 1:
             h = hits[0]
+            # B-30（2026-09-17）：直配命中的县名若同时也是某撤销迁移的旧名，
+            # 裸名输入不得静默选边——按前缀定向或输出双候选集。
+            _migs = [m for m in (_ABOLISHED_BY_NAME.get(h["path"][-1]) or [])
+                     if "-".join(m["path"]) != "-".join(h["path"])]
+            if _migs and not _ev_town:
+                _cur_prov = h["path"][0]
+                _pick_mig = [m for m in _migs if m["prov"] in text]
+                if _pick_mig:
+                    _m = _pick_mig[0]
+                    _cpath, _ccodes = CODE_PATH.get(_m["code"], ([], {}))
+                    return {"status": "resolve", "result": "-".join(_cpath), "codes": dict(_ccodes),
+                            "confidence": 0.8,
+                            "note": f"「{h['path'][-1]}」已于 {_m['year']} 年撤销，现属{_m['name']}，按现行区划解析"}
+                # 本级路径前缀（省/市）出现在输入里 → 定向现行，不再出双候选
+                # （「宁波市江北区解放路63号」含市名即定向；此前仅看省名导致整条变候选集——演练回归）
+                _cur_tokens = [seg for seg in h["path"][:-1]
+                               if len(seg) >= 2 and seg in text]
+                if not _cur_tokens and _cur_prov not in text:
+                    _cands = ["-".join(h["path"])] + ["-".join(m["path"]) for m in _migs]
+                    return {"status": "ambiguous", "result": _cands, "codes": None,
+                            "confidence": 0.8,
+                            "note": ("同名区划并存：「" + h["path"][-1] + "」既有现行建制，"
+                                     "也是已撤销迁移的旧名，输出候选集")}
             result_str, hcodes = "-".join(h["path"]), dict(h["codes"])
             ccode = hcodes.get("county")
             for tn in COUNTY_TOWNSHIPS.get(ccode or "", {}):
@@ -642,7 +1024,9 @@ def _resolve_core(raw: str) -> dict:
                     hcodes["township"] = COUNTY_TOWNSHIPS[ccode][tn]
                     break
             return {"status": "resolve", "result": result_str, "codes": hcodes,
-                    "confidence": 1.0, "note": "区县直配反推上级"}
+                    "confidence": 0.8 if _ev_town else 1.0,
+                    "note": ("同名县多处，以街道证据「" + _ev_town + "」消歧"
+                             if _ev_town else "区县直配反推上级")}
         return {"status": "ambiguous", "result": ["-".join(h["path"]) for h in hits], "codes": None,
                 "confidence": 0.9, "note": "同名区县多处存在，输出候选集"}
 
@@ -768,9 +1152,23 @@ def _resolve_core(raw: str) -> dict:
                     "codes": None, "confidence": 0.9, "note": "本市同名乡镇/街道，输出候选集"}
 
     if any(mk in rest for mk in ("开发区", "园区", "高新区", "新区")) and best_p not in ("上海市", "天津市", "北京市", "重庆市"):
-        return {"status": "special", "result": _fmt(best_p, hit_city, None), "codes": codes,
+        # 开发区/园区非正式建制（不虚构码），但所属地级市可确定（B-23，2026-09-17）：
+        # rest 以省内地级市去"市"短名开头时，补全所属地级。
+        _dev_city = None
+        if not hit_city:
+            for c, _cc, _cns in entries:
+                if c and c.endswith("市") and len(c) >= 3 and rest.startswith(c[:-1]):
+                    _dev_city = c
+                    break
+        return {"status": "special", "result": _fmt(best_p, hit_city or _dev_city, None), "codes": codes,
                 "confidence": 0.8, "note": "非正式区划（开发区/园区等），落到上级并标注口径"}
     if hit_city:
+        # 市级命中但残留文本仍声称下级建制：不静默吞掉，沿用 0.7 档（下级无匹配）并明说
+        seg = _residual_admin_seg(rest)
+        if seg:
+            return {"status": "resolve", "result": _fmt(best_p, hit_city, None), "codes": codes,
+                    "confidence": 0.7,
+                    "note": f"解析到地级市；「{seg}」未能在该市下级区划中核实（可能已撤销或更名）"}
         return {"status": "resolve", "result": _fmt(best_p, hit_city, None), "codes": codes,
                 "confidence": 0.9, "note": "解析到地级市"}
     if conf < 0.8:
@@ -794,6 +1192,23 @@ def _resolve_core(raw: str) -> dict:
                         "confidence": 0.8, "note": "模糊省匹配被县级证据修正"}
             return {"status": "ambiguous", "result": ["-".join(h["path"]) for h in hits2],
                     "codes": None, "confidence": 0.8, "note": "模糊省匹配且多县证据，输出候选集"}
+    # 省级命中但残留文本仍声称下级建制：不得按满档置信输出（0.6 档——
+    # 「省级确定、残留下级未核实」），港澳台下辖另注明无国标码、副表只读可查
+    if conf >= 0.8:
+        seg = _residual_admin_seg(rest)
+        if seg:
+            _mig = (_ABOLISHED.get(best_p) or {}).get(seg)
+            if _mig:
+                _nc2 = _mig["code"]
+                _cpath, _ccodes = CODE_PATH.get(_nc2, ([], {}))
+                return {"status": "resolve", "result": "-".join(_cpath), "codes": dict(_ccodes),
+                        "confidence": 0.8,
+                        "note": f"「{seg}」已于 {_mig['year']} 年撤销，现属{_mig['name']}，按现行区划解析"}
+            _tw = best_p in ("台湾省", "香港特别行政区", "澳门特别行政区")
+            _sub = "；该下辖无国标码，不在解析范围（独立副表只读可查）" if _tw else ""
+            return {"status": "resolve", "result": _fmt(best_p, None, None), "codes": codes,
+                    "confidence": 0.6,
+                    "note": f"解析到省级；「{seg}」未能核实为下级区划{_sub}"}
     return {"status": "resolve", "result": _fmt(best_p, None, None), "codes": codes,
             "confidence": conf, "note": "解析到省级"}
 
@@ -830,11 +1245,72 @@ def _shallow(out) -> bool:
     return False
 
 
+def _text_is_road(t: str) -> bool:
+    """整串是否就是一条道路名（末字/末词为道路通名）。用于阻断"路名被当区划"的纠错补救。
+    「山西路」若主解析已被道路守卫挡下，拼音纠错会把它救成"陕西省"（山西/陕西 无调拼音同为
+    shanxi）——那还不如老实说不知道（2026-09-16 回归教训）。"""
+    if not t:
+        return False
+    return t[-1] in _ROAD_TAIL or any(t.endswith(w) for w in _ROAD_WORD)
+
+
+# 行政区划通名（长通名在前，防"区"抢在"堂区/街道"之前命中）。
+_ADMIN_TAILS = ("街道", "堂区", "林区", "矿区", "新区", "特区",
+                "区", "市", "县", "旗", "盟", "镇", "乡", "村")
+
+
+def _residual_admin_seg(rest: str):
+    """上级解析后，残留文本中是否仍有以建制通名收尾的片段；有则返回该片段（供 note 引用）。
+
+    动机：省/市级命中后，残留的"下级声称"曾被静默吞掉并按满档置信输出——
+    「香港中西区」「台湾台北市」「广东省龙泉驿区」（龙泉驿区在成都，不在广东）
+    都返回 conf=1.0 的"解析到省级"，等于把"我没数据"包装成"我确定"（2026-09-16 回归教训）。
+    通名前至少 1 字专名才成段（纯「区」「市」不算）。"""
+    t = _strip_noise(rest or "")
+    if len(t) < 2:
+        return None
+    for tail in _ADMIN_TAILS:
+        j = t.rfind(tail)
+        if j >= 1:
+            return t[max(0, j - 6):j + len(tail)]
+    return None
+
+
+def _township_evidence(hits, text):
+    """B-24 街道证据消歧：同名县多候选时，找文本中归属唯一的乡镇/街道名。
+    返回 (hit, 街道名) 或 None。街道名须 ≥3 字防两字巧合；两个以上候选均有
+    归属街道时返回 None（证据冲突，维持歧义）。"""
+    matched = None
+    for h in hits:
+        ccode = (h.get("codes") or {}).get("county")
+        for tn in COUNTY_TOWNSHIPS.get(ccode or "", {}):
+            if len(tn) >= 3 and _match(text, tn):
+                if matched and matched[0] is not h:
+                    return None
+                if not matched:
+                    matched = (h, tn)
+                break
+    return matched
+
+
+def _dev_city_at_head(text: str):
+    """text 以某地级市去"市"短名开头时返回该地级全名（开发区/园区落所属地级，B-23）。"""
+    if not text:
+        return None
+    for p, pv in DIV.items():
+        for c, cv in pv["cities"].items():
+            if c and c.endswith("市") and len(c) >= 3 and text.startswith(c[:-1]):
+                return _fmt(p, c, None)
+    return None
+
+
 def _hard_reject(raw: str) -> bool:
-    """输入是否为"刻意拒绝"类（区域泛称/占位符）。刻意拒绝不得再走拼音纠错——
-    否则「华南」(huá nán) 会被同音纠成「桦南县」、「西南」被纠成「新安县」（v1 校准集回归教训）。"""
+    """输入是否为"刻意拒绝"类（区域泛称/占位符/纯道路名）。刻意拒绝不得再走拼音纠错——
+    否则「华南」(huá nán) 会被同音纠成「桦南县」、「西南」被纠成「新安县」（v1 校准集回归教训），
+    「山西路」会被救成「陕西省」（2026-09-16 回归教训）。"""
     t = _apply_alias(_strip_noise(raw or ""))
-    return t in REGION_GENERIC or any(w in t for w in UNRESOLVABLE_WORDS)
+    return (t in REGION_GENERIC or any(w in t for w in UNRESOLVABLE_WORDS)
+            or _text_is_road(t))
 
 
 def resolve(raw: str) -> dict:
@@ -843,8 +1319,18 @@ def resolve(raw: str) -> dict:
     才采纳（"通州区"类真歧义不被破坏，"杭洲市西湖区"类错字歧义被修复）。
     刻意拒绝的输入（区域泛称等）不纠错。"""
     out = _resolve_core(raw)
+    # 副表解析通道（B-31，2026-09-17）：港澳台下辖不在主底座（无国标码），
+    # 副表数据存在时（专业版/L1）在此升级到区/堂区/县市/乡镇层；社区版无该数据 → 自动关闭。
+    _subout = _sub_channel(raw, out)
+    if _subout:
+        return _subout
+    # 纠错门控（B-22/B-23，2026-09-17）：①_hard_reject（泛称/占位符/纯道路名）只在
+    # unresolvable 态阻断——ambiguous 态已含区划命中，末字"路"是地址正常组成；
+    # ②SPECIAL_DIRECT「特殊口径」结论不进纠错（「园区」曾被乱纠成垣曲县）。
+    _blocked = ((_hard_reject(raw) and out["status"] == "unresolvable")
+                or "特殊口径" in (out.get("note") or ""))
     if (_HAS_PY and raw and raw.strip() and _shallow(out)
-            and not _hard_reject(raw)):
+            and not _blocked):
         try:
             hit = _pinyin_retry(raw.strip())
         except Exception:
@@ -861,7 +1347,100 @@ def resolve(raw: str) -> dict:
                 out2["confidence"] = min(out2.get("confidence") or 0.8, 0.8)
                 out2["note"] = f"拼音纠错「{seg}」→「{name}」；{out2['note']}"
                 return out2
+    if raw and raw.strip() and _shallow(out) and not _blocked:
+        # 形近字第二道（拼音不同音、部首/字形相近的高频地址错字；B-22，2026-09-17：
+        # 「深玔市」玔 chuàn ≠ 圳 zhèn，同音纠错够不着）。采纳条件比拼音更严。
+        hit2 = _form_retry(raw.strip())
+        if hit2:
+            out2, wrong, right = hit2
+            adopt = (out2["status"] in ("resolve", "special")
+                     and _depth(out2) >= _depth(out))
+            if adopt:
+                out2["confidence"] = min(out2.get("confidence") or 0.8, 0.8)
+                out2["note"] = f"形近纠错「{wrong}」→「{right}」；{out2['note']}"
+                return out2
+    # 文本证据消歧（B-29 附带）：ambiguous 候选中恰有一个候选末段名是输入子串、
+    # 且输入还含其他区划内容时，以文本证据择一（conf 0.8）。裸名歧义维持。
+    if (out["status"] == "ambiguous" and isinstance(out.get("result"), list)
+            and raw):
+        _rs = raw.strip()
+        # B-30 约束：输入必须长于命中段本身（裸名琐碎匹配不算证据）
+        _hits = [r for r in out["result"]
+                 if len(r) > len(_rs) and len(_rs) > len(r.split("-")[-1])
+                 and r.split("-")[-1] in _rs]
+        if len(_hits) == 1:
+            _pick = _hits[0]
+            _pc = None
+            for _c, _pth in CODE_PATH.items():
+                if "-".join(_pth[0]) == _pick:
+                    _pc = dict(_pth[1]); break
+            return {"status": "resolve", "result": _pick, "codes": _pc,
+                    "confidence": 0.8,
+                    "note": "同名候选中「" + _pick.split("-")[-1] +
+                            "」为输入所指（文本证据），消歧"}
+    # 形近候选集（B-27）：白名单未命中时，按算法相关度表输出候选——不猜唯一，
+    # 复用 ambiguous 契约（result=候选列表），conf 0.5 = 候选未核实。
+    if out["status"] == "unresolvable" and raw and raw.strip() and not _blocked:
+        try:
+            cands = _form_candidates(raw.strip())
+        except Exception:
+            cands = None
+        if cands:
+            _o, _sc, _w, _r = cands[0]
+            return {"status": "ambiguous",
+                    "result": [o["result"] for o, sc, w, r in cands],
+                    "codes": None, "confidence": 0.5,
+                    "note": (f"疑似形近错字「{_w}」→「{_r}」（相关度 {_sc}），"
+                             "输出候选集供选择；相关度是相似度分，不是准确率")}
     return out
+
+
+# 形近字对（错字→正字）：只收高频、把握大的地址错字，持续登记；宁缺勿滥。
+# 白名单（人工确认）→ 自动纠错为唯一答案；长尾（未确认）→ 走 _form_candidates 候选集。
+_FORM_SIMILAR = {"玔": "圳"}
+
+# 形近相关度表（B-27，算法生成）：wrong -> [(right, score)...]。只用于输出候选集，
+# 不自动采纳为唯一答案——『写对就一种，写错无数种』（2026-09-17 定案）。
+_FORM_TABLE_FILE = Path(__file__).parent / "data" / "form_similar_v1.json"
+_FORM_TABLE: dict[str, list] = {}
+try:
+    _ft = json.loads(_FORM_TABLE_FILE.read_text(encoding="utf-8")).get("table") or {}
+    _FORM_TABLE = {k: v for k, v in _ft.items() if isinstance(v, list) and v}
+except Exception as _e:
+    print(f"[warn] form_similar_v1.json 加载失败，形近候选集不可用: {_e}")
+
+
+def _form_retry(raw: str):
+    """形近字纠错重试：把 raw 中的形近错字替换为正字后重解析。返回 (out2, wrong, right) 或 None。"""
+    if not raw:
+        return None
+    for wrong, right in _FORM_SIMILAR.items():
+        if wrong in raw and right not in raw:
+            out2 = _resolve_core(raw.replace(wrong, right))
+            if out2["status"] in ("resolve", "special", "ambiguous"):
+                return out2, wrong, right
+    return None
+
+
+_FORM_CAND_TOPK = 3  # 每个字位只试相关度前 3 的候选（控制试探成本）
+
+
+def _form_candidates(raw: str):
+    """形近候选集（B-27）：主解析失败时，对 raw 逐字查形近相关度表做单字替换试探，
+    收集替换后能解析出区划的结果，按相关度降序。**只输出候选、不采纳为唯一答案**。"""
+    if not raw or len(raw) > 30 or not _FORM_TABLE:
+        return None
+    outs: dict[str, tuple] = {}
+    for i, ch in enumerate(raw):
+        for right, sc in _FORM_TABLE.get(ch, ())[:_FORM_CAND_TOPK]:
+            o = _resolve_core(raw[:i] + right + raw[i + 1:])
+            if o["status"] == "resolve":
+                prev = outs.get(o["result"])
+                if prev is None or sc > prev[1]:
+                    outs[o["result"]] = (o, sc, ch, right)
+    if not outs:
+        return None
+    return sorted(outs.values(), key=lambda x: -x[1])
 
 
 def _pinyin_retry(text: str):
@@ -977,7 +1556,12 @@ def query_events(year=None, q=None, code=None, limit=50, year_start=None, year_e
 
 
 def dual_code(query: str) -> dict:
-    """双码对照（L1 端点核心）：民政口径现行码 × 统计口径的对照与差异点诚实披露。"""
+    """口径差异披露（社区版行为）：只说明民政 × 统计两套口径的差异点，不返回对照表。
+
+    边界（勿改）：双码交叉表（民政 ↔ 统计逐条对照 + 按县覆盖率）属专业版数据包，
+    不随社区版分发。社区版保留本函数是为了「诚实披露差异」这一信誉能力，
+    一旦把对照表放进 data/，该付费点即归零。
+    """
     t = (query or "").strip()
     if not t:
         return {"status": "unresolvable", "note": "参数不能为空"}
