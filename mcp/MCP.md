@@ -189,32 +189,3 @@ python -m venv .venv
 ## 五、许可
 
 与本仓库一致：代码 MIT，数据 CC BY 4.0。
-
----
-
-## 七、分发与登记（让别人发现这个服务）
-
-上传 PyPI 只是货架，不等于有人来。MCP 生态的发现路径按优先级：
-
-| 顺序 | 渠道 | 动作 | 状态 |
-|---|---|---|---|
-| 1 | **官方 MCP Registry**（registry.modelcontextprotocol.io） | `mcp-publisher login github`（浏览器授权）→ `mcp-publisher publish`；`server.json` 已备在 `mcp/`，命名空间 `io.github.nbsetsail/quhua-mcp` | ☐ |
-| 2 | **punkpeye/awesome-mcp-servers**（83k★，流量最高的发现面） | 向该仓库提 PR，条目文案见 `mcp/MCP.md` §七.1 | ☐ |
-| 3 | **Glama**（自动爬 GitHub，但需认领） | glama.ai/mcp/servers → Add Server → 提交仓库 URL | ☐ |
-| 4 | **MCP.so** | 官网 Submit → GitHub issue（5 分钟） | ☐ |
-| 5 | **Smithery** | smithery.ai → Publish MCP → 连接本仓库（stdio 服务列为 self-hosted） | ☐ |
-| 6 | **GitHub 仓库本身** | topics 补 `mcp` / `model-context-protocol` / `china`；README 已含安装段 | ☐ |
-
-### 七.1 awesome-mcp-servers 条目文案（提 PR 直接粘）
-
-```markdown
-- [quhua-mcp](https://pypi.org/project/quhua-mcp/) - 中国行政区划权威事实源：地址解析清洗、
-  编码直查与历史码回溯（1981-2026）、下级区划、变更事件检索、区划存在性校验。
-  查不到时诚实返回 `unresolvable` 而不是编造，同名歧义返回候选集。
-  纯本地 stdio，`uvx quhua-mcp` 一行接入 Claude Desktop / Cursor / Claude Code。
-```
-
-### 七.2 纪律提醒
-
-MCP 的定位是**试金石 + 可验证资产**，不是获客渠道（止损线：3 个月真实使用者 ≈ 0 即封存宣传）。
-所以分发只做**登记型动作**（合计 ~1 小时），不投内容营销；上面 1、2 两项做完，其余随缘。
