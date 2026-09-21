@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.nbsetsail/quhua-mcp",
+  "title": "quhua-mcp — 中国行政区划查证",
+  "description": "中国行政区划权威事实源：地址解析清洗、编码直查与历史码回溯、下级区划、变更事件检索；查不到时诚实返回失败",
+  "websiteUrl": "https://github.com/nbsetsail/real-china-division",
+  "repository": {
+    "url": "https://github.com/nbsetsail/real-china-division",
+    "source": "github"
+  },
+  "version": "0.4.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "quhua-mcp",
+      "version": "0.4.0",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
