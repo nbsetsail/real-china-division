@@ -2,8 +2,8 @@ __pycache__/
 *.pyc
 .pytest_cache/
 # 注：.github/ 必须入库——CI 配置（workflows/ci.yml）随仓库分发才会生效。
-# 此前误被本文件排除，导致 GitHub Actions 从未运行；断言已核验：
-# 省级 33 / 县级 2847 / 事件 5274（2026-09-15）。
+# 此前误被本文件排除，导致 GitHub Actions 从未运行；具体断言见 .github/workflows/ci.yml
+# （当前：省级 34 / 县级 2847 / 事件 > 5000 —— 以该文件为准，此处不再复写数字，避免两处漂移）。
 # 原始大体积村级数据只留本地作增量更新底座，不入库（46MB 级）；
 # 对外分发走 GitHub Release 的按版本打包 tar.gz（由 build_l0_release.py 生成，维护者手动上传）。
 # 小体积引擎数据（divisions/townships/change_events/historical_changes 等 <3MB）随仓库走。
@@ -15,3 +15,10 @@ data/villages.csv
 # 历次归档以 dist/real-china-division-data-<版本>.tar.gz 为准（文件名带版本号，可并存）；
 # 其内的 villages.csv.gz / DATA_MANIFEST.json / SHA256SUMS.txt 文件名固定，每次构建覆盖，只反映最新一次。
 dist/
+
+# Python 打包/环境产物：仓库自 2026-09-18 起带 pyproject.toml（MCP 服务可 pip / uvx 安装），
+# 贡献者跑 `uv sync` / `uv venv` / `pip install -e .` 会产生下列目录，一律不入库。
+.venv/
+venv/
+build/
+*.egg-info/

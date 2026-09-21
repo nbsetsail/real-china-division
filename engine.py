@@ -566,7 +566,9 @@ ALIAS_ALL = {**HIST_ALIAS, **ALIAS}  # 手工词典优先于自动生成
 
 # ---------------------------------------------------------------------------
 # 拼音纠错（C3）：同音错字免规则命中（"深镇/山冬/杭洲"），替代 aliases.json 错字硬编码。
-# pypinyin 为可选依赖：未安装时纠错降级关闭，主路径（规则+词典）不受影响。
+# pypinyin 为可选依赖：未安装时纠错降级关闭。这不只是「少一项增强」——
+# 模糊匹配（编辑距离 1）的消歧依据只有读音，失它须整体放弃模糊匹配，
+# 否则「东北省」会被当作「河北省」的错写采纳。主路径（规则+词典）不受影响。
 # 索引惰性构建（首次纠错时），仅收录省/市/县三级约 6.4k 形态。
 # ---------------------------------------------------------------------------
 try:
@@ -576,25 +578,6 @@ except Exception:
     _HAS_PY = False
 
 PY_INDEX = None
-
-
-
-
-ALIAS_ALL = {**HIST_ALIAS, **ALIAS}  # 手工词典优先于自动生成
-
-# ---------------------------------------------------------------------------
-# 拼音纠错（C3）：同音错字免规则命中（"深镇/山冬/杭洲"），替代 aliases.json 错字硬编码。
-# pypinyin 为可选依赖：未安装时纠错降级关闭，主路径（规则+词典）不受影响。
-# 索引惰性构建（首次纠错时），仅收录省/市/县三级约 6.4k 形态。
-# ---------------------------------------------------------------------------
-try:
-    from pypinyin import lazy_pinyin
-    _HAS_PY = True
-except Exception:
-    _HAS_PY = False
-
-PY_INDEX = None
-
 
 def _pinyin_key(s: str) -> str:
     # 音节之间用 "-" 分隔：直接拼接会跨音节碰撞——"西南"=xi+nan 与 "新安"=xin+an 拼接后
@@ -839,6 +822,14 @@ def _resolve_core(raw: str) -> dict:
         return {"status": "unresolvable", "result": None, "codes": None, "confidence": 0.0,
                 "note": f"区域泛称「{text}」非行政区划，诚实拒绝"}
 
+    # 「方位/大区 + 省」不是行政区划，但 REGION_GENERIC 只收整串，带后缀即漏网——
+    # 无 pypinyin 时走模糊匹配命中「河北省」（字距 1），有 pypinyin 时走拼音纠错命中
+    # 「东胜区」（"东省"≈"东胜"），两条都是假阳性。故在此统一拒绝。
+    # 仅对"省"后缀生效：中国无以方位词命名的省级政区，而"北方镇"这类真实地名不受影响。
+    if text.endswith("省") and text[:-1] in REGION_GENERIC:
+        return {"status": "unresolvable", "result": None, "codes": None, "confidence": 0.0,
+                "note": f"区域泛称「{text[:-1]}」加「省」不构成行政区划，诚实拒绝"}
+
     # 多实体拆分用**别名展开前**的原文：别名会把"呼和浩特郊区"展开成"内蒙古自治区-呼和浩特市-赛罕区"，
     # 其中的"和"字会被分隔符误切（v1 校准集回归教训）。
     _m = _multi_split(raw_text)
@@ -890,7 +881,12 @@ def _resolve_core(raw: str) -> dict:
                 # ②拼音不验证 → 读音都不同，多半是别的词（"南京市"nan-jing-shi ≠"北京市"bei-jing-shi）。
                 if win in KNOWN_NAMES or win in KNOWN_SHORT:
                     continue
-                if _HAS_PY and _pinyin_key(win) != _pinyin_key(form):
+                # 无 pypinyin 时闸②失效，2 字距 1 分不开（「东北省」←→「河北省」字距同为 1），
+                # 会命中不存在的区划 → 假阳性。宁漏纠不误报，与本仓库「未安装时该能力降级为不解析」
+                # 的承诺一致。（2026-09-18 MCP 冒烟测试在无 pypinyin 环境发现）
+                if not _HAS_PY:
+                    continue
+                if _pinyin_key(win) != _pinyin_key(form):
                     continue
                 prov_found.append((p, 0.8, form))
 
@@ -905,6 +901,14 @@ def _resolve_core(raw: str) -> dict:
                     "codes": {"province": DIV[p]["code"],
                               "city": DIV[p]["cities"][c].get("code"), "county": None},
                     "confidence": 1.0, "note": "地级（市/地区/自治州/盟）全名直配"}
+        # B-36（2026-09-18）：输入以「省」结尾 = 断言省级建制。省级（含别名/模糊纠错）
+        # 全部未命中时，县级短形式子串命中是张冠李戴（「太平洋省」→太平区，conf 1.0
+        # 假阳性比 404 更伤可信度）→ 诚实拒绝。仅限「省」后缀（「沙市」等历史简称
+        # 是合法路径）；时间机器路径不受此限（历史年份省级体系不同，T107 教训）。
+        if text.endswith("省"):
+            return {"status": "unresolvable", "result": None, "codes": None,
+                    "confidence": 0.0, "assert_province": True,
+                    "note": f"「{text}」断言省级建制但无此省；相邻县级名不构成解析依据"}
         hits = _global_county_match(text)
         if hits is None:
             # 乡镇/街道名直配（仅收录 >=3 字且带后缀的名字，防误伤）；按后缀位置回溯截取候选，
@@ -1309,7 +1313,11 @@ def _hard_reject(raw: str) -> bool:
     否则「华南」(huá nán) 会被同音纠成「桦南县」、「西南」被纠成「新安县」（v1 校准集回归教训），
     「山西路」会被救成「陕西省」（2026-09-16 回归教训）。"""
     t = _apply_alias(_strip_noise(raw or ""))
-    return (t in REGION_GENERIC or any(w in t for w in UNRESOLVABLE_WORDS)
+    # 「方位/大区 + 省」（"东北省""华东省"）同属刻意拒绝：带后缀会从 REGION_GENERIC 漏网，
+    # 进而被模糊匹配或拼音纠错捡成真实区划（"东省"→东胜区、"南省"→桦南县）——2026-09-18 发现。
+    _generic_suffixed = bool(t) and t.endswith("省") and t[:-1] in REGION_GENERIC
+    return (t in REGION_GENERIC or _generic_suffixed
+            or any(w in t for w in UNRESOLVABLE_WORDS)
             or _text_is_road(t))
 
 
@@ -1330,7 +1338,7 @@ def resolve(raw: str) -> dict:
     _blocked = ((_hard_reject(raw) and out["status"] == "unresolvable")
                 or "特殊口径" in (out.get("note") or ""))
     if (_HAS_PY and raw and raw.strip() and _shallow(out)
-            and not _blocked):
+            and not _blocked and not out.get("assert_province")):
         try:
             hit = _pinyin_retry(raw.strip())
         except Exception:
@@ -1347,7 +1355,8 @@ def resolve(raw: str) -> dict:
                 out2["confidence"] = min(out2.get("confidence") or 0.8, 0.8)
                 out2["note"] = f"拼音纠错「{seg}」→「{name}」；{out2['note']}"
                 return out2
-    if raw and raw.strip() and _shallow(out) and not _blocked:
+    if (raw and raw.strip() and _shallow(out) and not _blocked
+            and not out.get("assert_province")):
         # 形近字第二道（拼音不同音、部首/字形相近的高频地址错字；B-22，2026-09-17：
         # 「深玔市」玔 chuàn ≠ 圳 zhèn，同音纠错够不着）。采纳条件比拼音更严。
         hit2 = _form_retry(raw.strip())
@@ -1380,7 +1389,8 @@ def resolve(raw: str) -> dict:
                             "」为输入所指（文本证据），消歧"}
     # 形近候选集（B-27）：白名单未命中时，按算法相关度表输出候选——不猜唯一，
     # 复用 ambiguous 契约（result=候选列表），conf 0.5 = 候选未核实。
-    if out["status"] == "unresolvable" and raw and raw.strip() and not _blocked:
+    if (out["status"] == "unresolvable" and raw and raw.strip()
+            and not _blocked and not out.get("assert_province")):
         try:
             cands = _form_candidates(raw.strip())
         except Exception:
@@ -1552,7 +1562,7 @@ def query_events(year=None, q=None, code=None, limit=50, year_start=None, year_e
     out.sort(key=lambda x: -x["year"])
     return {"total": len(out), "returned": min(len(out), limit), "events": out[:limit],
             "filter": {"year": year, "year_start": year_start, "year_end": year_end, "q": q, "code": c},
-            "note": "变更事件库 1980-2026（官方代码簿差分+策展）；doc_no 增量回填中"}
+            "note": "变更事件库 1981-2026（官方代码簿差分+策展）；doc_no 增量回填中"}
 
 
 def dual_code(query: str) -> dict:

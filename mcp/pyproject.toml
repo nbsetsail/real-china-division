@@ -1,0 +1,49 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "quhua-mcp"
+version = "0.4.0"
+description = "中国行政区划 MCP 服务：地址解析清洗、编码直查与历史码回溯、下级区划、变更事件检索、区划存在性校验"
+readme = "MCP.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = ["mcp", "china", "administrative-division", "address", "geocoding", "区划"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Natural Language :: Chinese (Simplified)",
+  "Topic :: Software Development :: Libraries",
+]
+# pypinyin 不是「纯增强」：它决定错字纠错是否正确（详见 MCP.md §四），因此列为硬依赖，
+# 让不同用户的解析结果一致，而不是「装了才有、没装就少一块能力」。
+dependencies = [
+  "mcp>=1.9",
+  "pypinyin>=0.50",
+]
+
+[project.urls]
+Repository = "https://github.com/nbsetsail/real-china-division"
+
+[project.scripts]
+quhua-mcp = "mcp_server:main"
+
+# 把引擎数据作为包数据一并分发，用户无需克隆仓库即可运行。
+# 只收录引擎实际读取的文件（约 3.9 MB）；villages.csv（44 MB）不参与、也不进包。
+# 注意：与 engine.py 内的路径常量一一对应，改动那边需同步这里。
+[tool.hatch.build.targets.wheel]
+# 构建上下文是 mcp/（pyproject 所在目录），engine 与数据在仓库根——
+# 用 force-include 把它们映射进 wheel 的包内同级位置（engine.py 的数据路径
+# 常量是 Path(__file__).parent / ...，必须同级才能命中）。
+only-include = [
+  "mcp_server.py",
+]
+# TOML 内联表不允许跨行，故写成子表
+[tool.hatch.build.targets.wheel.force-include]
+"../engine.py" = "engine.py"
+"../aliases.json" = "aliases.json"
+"../data/divisions_v1.json" = "data/divisions_v1.json"
+"../data/townships_v1.json" = "data/townships_v1.json"
+"../data/historical_changes_v1.json" = "data/historical_changes_v1.json"
+"../data/form_similar_v1.json" = "data/form_similar_v1.json"
