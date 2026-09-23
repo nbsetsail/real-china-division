@@ -980,7 +980,9 @@ def _resolve_core(raw: str) -> dict:
                                 "codes": {"province": pv["code"],
                                           "city": pv["cities"][_c_seen].get("code"), "county": None},
                                 "confidence": 0.7,
-                                "note": f"市级命中；「{text}」的区县级在该市现行区划中无匹配（可能已撤销或更名）"}
+                                # 备注必须引用原始输入：text 经 _strip_noise 折叠连续数字，
+                                # 门牌「200号」会变「2号」，引用它=给用户看被篡改的地址（B-50）。
+                                "note": f"市级命中；「{raw.replace(' ', '')}」的区县级在该市现行区划中无匹配（可能已撤销或更名）"}
         hits = refined or hits
         fulls = [h for h in hits if h.get("full")]
         if len(hits) > 1 and fulls and len(fulls) < len(hits):
@@ -1752,6 +1754,15 @@ def run_golden(path: str):
 
 
 def _judge(exp, out) -> bool:
+    # B-50 备注断言：note 面向用户（"为什么这么判"），必须引用原始输入，
+    # 不得引用 _strip_noise 折叠后的文本（门牌「200号」→「2号」）。
+    nc = exp.get("note_contains")
+    if nc and not all(c in str(out.get("note") or "") for c in nc):
+        return False
+    return _judge_mode(exp, out)
+
+
+def _judge_mode(exp, out) -> bool:
     mode = exp.get("mode")
     if mode == "resolve":
         if out["status"] not in ("resolve", "special"):
