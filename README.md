@@ -92,7 +92,7 @@ resolve_by_code("510124")     # 历史码回溯 → 四川省-成都市-郫都�
   发布于 GitHub Release 的 `real-china-division-data-0.3.0.tar.gz`。
   未覆盖 7 个特殊县域：金门、三沙市西沙区/南沙区、西藏岗巴/噶尔、云南大姚、新疆和安（新设）
 - [x] 变更事件附民政部年度变更页链接（183 条，含 2010-2017 的 108 条）
-- [x] 季度准确率报告：[2026Q3 报告](docs/accuracy-report-2026Q3.md)——259/259（当季快照，含文件哈希供独立复现），与回归集同步更新，见 [CHANGELOG.md](CHANGELOG.md)
+- [x] 季度准确率报告：[2026Q3 报告](docs/accuracy-report-2026Q3.md)——262/262（当季快照，含文件哈希供独立复现），与回归集同步更新，见 [CHANGELOG.md](CHANGELOG.md)
 
 ## 七、License
 
